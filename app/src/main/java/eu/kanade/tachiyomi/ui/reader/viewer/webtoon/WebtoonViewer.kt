@@ -15,8 +15,10 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import mihon.app.di.appGraph
@@ -199,9 +201,29 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
      * Called from the RecyclerView listener when a [page] is marked as active. It notifies the
      * activity of the change and requests the preload of the next chapter if this is the last page.
      */
+    init {
+        // SY --> 告诉超分队列进入连续阅读模式：此模式下**一律不抢占**。
+        // 条漫一屏可见多页、目标页随滚动连续前移，abort 在跑的页几乎必然是浪费 ——
+        // 那页稍后仍会被读到，重跑一遍就是用户看到的「重复超分 / 进度从零开始」。
+        // `isContinuous=false` 是竖向翻页（一屏一页），语义上仍属翻页模式，不设该标记。
+        ImageEnhancer.setContinuousMode(isContinuous)
+        // SY <--
+    }
+
     private fun onPageSelected(page: ReaderPage, allowPreload: Boolean) {
         val pages = page.chapter.pages ?: return
         logcat { "onPageSelected: ${page.number}/${pages.size}" }
+
+        // SY --> 条漫模式下由这里统一决定「用户当前在读哪一页」。
+        //
+        // 页面视图那边被显式禁掉了这个权力（WebtoonPageHolder 里
+        // `controlsCurrentPageSelection = false`）：条漫一屏会同时绑定好几页（含预载页），
+        // 若让每个视图各自上报目标页，最后绑定的那个预载页就会霸占目标页并把正在推理的
+        // 页顶掉 —— 表现正是「队列明显有问题、同一页反复超分、进度从零开始」。
+        // SY <--
+        ReaderPageImageView.currentGlobalPageIndex = page.index
+        ImageEnhancer.reprioritizeAround(page.index)
+
         activity.onPageSelected(page)
 
         // Preload next chapter once we're within the last 5 pages of the current chapter

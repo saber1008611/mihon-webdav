@@ -111,6 +111,13 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         Injekt = InjektScope(MetroInjektRegistrar(application = this, graphProvider = this))
         graph.inject(this)
 
+        // SY --> 2026-09-21: 此处曾有一段临时的「模型包全链路自检」代码（用 filesDir 下的
+        // modelpack_selftest 文件门控），用于验证「已装模型包 → 解压 → 按路径加载权重/着色器」。
+        // 真机验证通过（4 款模型 SUMMARY loaded=4/4）后已删除。
+        // 注意：当前宿主**不内置任何模型权重**，模型全部来自已安装的 mihon.upscale.modelpack
+        // 模型包（见 util/waifu2x/ModelPackLoader.kt）；包没装时对应模型不可用，超分静默回退原图。
+        // SY <--
+
         TelemetryConfig.init(applicationContext)
 
         GlobalExceptionHandler.initialize(applicationContext, CrashActivity::class.java)

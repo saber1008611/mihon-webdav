@@ -13,6 +13,10 @@ import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import androidx.paging.filter
 import androidx.paging.map
+import tachiyomi.data.PageTrackingPagingSource
+import tachiyomi.data.source.SourcePage
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Assisted
 import dev.zacsweers.metro.AssistedFactory
@@ -119,16 +123,41 @@ class BrowseSourceViewModel(
     }
 
     /**
-     * Flow of Pager flow tied to [State.listing]
+     * Flow of Pager flow tied to [State.listing] and the requested start page.
+     * Changing [State.startPage] (via [jumpToPage]) re-creates the Pager with the
+     * new [androidx.paging.Pager.initialKey] so the list reloads from that page.
      */
+    // SY --> 跳转页码：记录每个 manga 所属的真实源页码，供滚动时联动 FAB 显示
+    private val pagingGeneration = AtomicLong()
+    private val mangaSourcePages = ConcurrentHashMap<Long, SourcePage>()
+    // SY <--
+
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems.get()
-    val mangaPagerFlowFlow = state.map { it.source to it.listing }
-        .filter { (source, _) -> source != null }
-        .map { (_, listing) -> listing }
+    val mangaPagerFlowFlow = state
+        .filter { it.source != null }
+        .map { MangaPageRequest(it.listing, it.startPage, it.pageRequestId) }
         .distinctUntilChanged()
-        .map { listing ->
-            Pager(PagingConfig(pageSize = 25)) {
-                getRemoteManga(sourceId, listing.query ?: "", listing.filters)
+        .map { request ->
+            // SY --> 每次重建 Pager 都换新 generation 并清空旧映射，避免跨列表残留
+            val generation = pagingGeneration.incrementAndGet()
+            mangaSourcePages.clear()
+            // SY <--
+            Pager(
+                config = PagingConfig(pageSize = 25),
+                initialKey = request.startPage.toLong(),
+            ) {
+                // SY --> 用包装源记录每页 manga 的真实页码
+                PageTrackingPagingSource(
+                    delegate = getRemoteManga(sourceId, request.listing.query ?: "", request.listing.filters),
+                    onPageLoaded = { page, mangas ->
+                        if (pagingGeneration.get() == generation) {
+                            mangas.forEach { manga ->
+                                mangaSourcePages[manga.id] = SourcePage(generation, page)
+                            }
+                        }
+                    },
+                )
+                // SY <--
             }.flow.map { pagingData ->
                 pagingData.map { manga ->
                     getManga.subscribe(manga.url, manga.source)
@@ -179,6 +208,8 @@ class BrowseSourceViewModel(
                     filters = filters ?: input.filters,
                 ),
                 toolbarQuery = query ?: input.query,
+                browsePage = 1,
+                startPage = 1,
             )
         }
     }
@@ -222,9 +253,33 @@ class BrowseSourceViewModel(
                 filters = defaultFilters,
                 listing = listing,
                 toolbarQuery = listing.query,
+                browsePage = 1,
+                startPage = 1,
             )
         }
     }
+
+    // SY --> 跳转页码：跳到指定页并（必要时）重新从目标页加载列表
+    fun jumpToPage(page: Int) {
+        if (page < 1) return
+        state.update {
+            it.copy(
+                browsePage = page,
+                startPage = page,
+                pageRequestId = it.pageRequestId + 1,
+            )
+        }
+    }
+
+    // SY --> 滚动联动：根据当前首个可见 manga 反查其真实源页码，仅更新显示用 browsePage（不触发 Pager 重建）
+    fun updateVisibleManga(mangaId: Long) {
+        val sourcePage = mangaSourcePages[mangaId]
+            ?.takeIf { it.generation == pagingGeneration.get() }
+            ?.page
+            ?: return
+        state.update { s -> if (sourcePage == s.browsePage) s else s.copy(browsePage = sourcePage) }
+    }
+    // SY <--
 
     /**
      * Adds or removes a manga from the library.
@@ -365,7 +420,18 @@ class BrowseSourceViewModel(
         val filters: FilterList = FilterList(),
         val toolbarQuery: String? = null,
         val dialog: Dialog? = null,
+        val browsePage: Int = 1,
+        val startPage: Int = 1,
+        val pageRequestId: Int = 0,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
     }
+
+    // SY --> 触发 Pager 重建的请求键：listing 变化或跳转页码时都会改变
+    private data class MangaPageRequest(
+        val listing: Listing,
+        val startPage: Int,
+        val requestId: Int,
+    )
+    // SY <--
 }

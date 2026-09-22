@@ -1,0 +1,13 @@
+7767517
+11 11
+Input            input            0 1 data
+Convolution      conv0            1 1 data             conv0_out        0=8 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 15=1 16=1 5=1 6=72 9=1
+Convolution      conv1            1 1 conv0_out        conv1_out        0=8 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 15=1 16=1 5=1 6=576 9=1
+Convolution      conv2            1 1 conv1_out        conv2_out        0=8 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 15=1 16=1 5=1 6=576 9=1
+Convolution      conv3            1 1 conv2_out        conv3_out        0=8 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 15=1 16=1 5=1 6=576 9=1
+Convolution      conv4            1 1 conv3_out        conv4_out        0=8 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 15=1 16=1 5=1 6=576 9=1
+Convolution      conv5            1 1 conv4_out        conv5_out        0=8 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 15=1 16=1 5=1 6=576 9=1
+Convolution      conv6            1 1 conv5_out        conv6_out        0=8 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 15=1 16=1 5=1 6=576 9=1
+Convolution      conv7            1 1 conv6_out        conv7_out        0=8 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 15=1 16=1 5=1 6=576 9=1
+Convolution      conv8            1 1 conv7_out        conv8_out        0=8 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 15=1 16=1 5=1 6=576 9=1
+Deconvolution    deconv           1 1 conv8_out        output           0=1 1=2 11=2 2=1 12=1 3=2 13=2 4=0 14=0 15=0 16=0 5=0 6=32

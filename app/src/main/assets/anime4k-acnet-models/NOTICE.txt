@@ -1,0 +1,29 @@
+Anime4K v4 ACNet (2x) —— 模型来源与转换说明
+==========================================
+
+来源
+----
+* 上游模型仓库：https://github.com/Kiastr/Venera-SSR （该 APP 的内置超分模型）
+* 原始文件：anime4k_acnet.onnx（21,703 字节，ONNX opset 9 / IR 6）
+* 算法出处：bloc97/Anime4K v4.0 "ACNet"（MIT License），
+  上游：https://github.com/bloc97/Anime4K
+
+模型结构（ONNX 原样）
+--------------------
+  输入  data   float[1, 1, H, W]      单通道亮度 Y
+  9 × [Conv 3x3, pad 1, 8ch] + ReLU   （与 ReLU 融合）
+  输出  output float[1, 1, 2H, 2W]    ConvTranspose 2x2 / stride 2，8 -> 1
+即：纯亮度（luma-only）2 倍超分网络，感受野半径 9 像素。
+
+转换
+----
+本仓库的推理引擎是 ncnn，而 Venera-SSR 提供的是 ONNX，因此需要转换格式。
+转换由手写脚本完成（onnx2ncnn_acnet.py，按 ncnn-20260113 的 param/bin 文件格式
+逐字段生成，并用 onnxruntime 逐层对齐校验，最大误差 1.2e-6）：
+
+  anime4k_acnet.onnx  ->  anime4k_acnet.param (1,411 B)
+                          anime4k_acnet.bin   (19,176 B)
+
+因为该网络是单通道（luma）模型，与本项目原有的 3 通道 RGB 管线不兼容，
+运行链路做了配套适配：输入取 BT.601 亮度，输出再用原图（双三次放大后的）
+色度合成回彩色 —— 见 app/src/main/cpp/waifu2x.cpp 中的 luma_model 分支。

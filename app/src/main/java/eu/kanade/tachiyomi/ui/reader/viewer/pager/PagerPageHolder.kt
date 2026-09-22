@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
+import eu.kanade.tachiyomi.ui.reader.viewer.enhanceKey
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
@@ -63,6 +64,13 @@ class PagerPageHolder(
     private var loadJob: Job? = null
 
     init {
+        // SY --> 翻页模式下，一屏只有一页是「当前页」。每个 Holder 都调用
+        // ReaderPageImageView.setNonAnimatedImage 时会尝试 reprioritizeAround，
+        // 若允许 Holder 自行上报目标页，ViewPager 的预载页会在绑定顺序中最后一个，
+        // 把目标页霸占成预载页，导致用户真正在读的那一页被挤到队尾甚至放弃（显示"原图"）。
+        // 因此把目标页控制权交给 PagerViewer.onReaderPageSelected。
+        controlsCurrentPageSelection = false
+        // SY <--
         loadJob = scope.launch { loadPageAndProcessStatus() }
     }
 
@@ -171,6 +179,9 @@ class PagerPageHolder(
                         zoomStartPosition = viewer.config.imageZoomType,
                         landscapeZoom = viewer.config.landscapeZoom,
                     ),
+                    // SY --> 超分移植：开启增强时把这一页在缓存里的定位信息传下去
+                    enhanceKey = item.enhanceKey(viewer.config.enhanceEnabled),
+                    // SY <--
                 )
                 if (!isAnimated) {
                     pageBackground = background
@@ -185,8 +196,17 @@ class PagerPageHolder(
         }
     }
 
-    private fun process(page: ReaderPage, imageSource: BufferedSource): BufferedSource {
-        if (viewer.config.dualPageRotateToFit) {
+    // SY --> 超分移植：与上游 usesTransformedEnhancedDisplay 对齐。
+    //
+    // 双页拆分 / 旋转时，显示的是「变换之后的半页」，而增强缓存的键与内容是
+    // 「未变换的整页」——直接换图会导致几何/内容对不上。这些模式下退回原图路径，
+    // 只影响开了增强 + 同时开了双页模式的用户，且是「不增强」而非「错增强」。
+    private fun usesTransformedEnhancedDisplay(): Boolean {
+        return viewer.config.dualPageSplit || viewer.config.dualPageRotateToFit
+    }
+    // SY <--
+
+    private fun process(page: ReaderPage, imageSource: BufferedSource): BufferedSource {        if (viewer.config.dualPageRotateToFit) {
             return rotateDualPage(imageSource)
         }
 

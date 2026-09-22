@@ -188,6 +188,9 @@
     <string name="onboarding_storage_selection_required">A folder must be selected</string>
     <string name="onboarding_storage_help_info">Updating from an older version and not sure what to select? Refer to the storage guide for more information.</string>
     <string name="onboarding_storage_help_action">Storage guide</string>
+    <string name="onboarding_storage_all_files_access">All files access permission</string>
+    <string name="onboarding_storage_all_files_access_description">Required on Android 11 and above so that %1$s can read and write the storage folder directly. Without it, the app can only use folders you pick through the system file picker.</string>
+    <string name="onboarding_storage_all_files_access_granted">Granted</string>
     <string name="onboarding_permission_install_apps">Install apps permission</string>
     <string name="onboarding_permission_install_apps_description">To install source extensions.</string>
     <string name="onboarding_permission_notifications">Notification permission</string>
@@ -1099,7 +1102,69 @@
     <string name="donationCampaign.paragraph3">Regardless, Mihon will continue to be maintained by me and the volunteers, and it will stay open source.</string>
     <string name="donationCampaign.contactPlatform">Discord</string>
     <string name="donationCampaign.dismiss">Dismiss</string>
-    <!-- SY --> 从 mihon_img_upscale 移植：下载章节的 WebDAV 云同步。 -->
+
+    <!-- SY --> 超分（从 mihon_img_upscale 移植）：画面增强设置项文案。 -->
+    <string name="reader_image_enhancement">Image enhancement</string>
+    <string name="reader_model">Model</string>
+    <!-- SY 下面两条是「可达式双引擎」改造前的旧模型名（sudo UltraCompact / Waifu2x Fast）。
+         代码里已不再引用，但保留在 base 里，避免其它语言文件里残留的同名条目成为孤儿键。
+         （注意：moko-resources 的 XML 解析器不接受注释内出现连续两个连字符，故 SY 标记这里不写箭头。） -->
+    <string name="reader_model_sudo_ultracompact">AnimeJaNai UltraCompact 2x</string>
+    <string name="reader_model_waifu2x_fast">Waifu2x (Fast)</string>
+    <string name="reader_model_waifu2x_cunet">Waifu2x CUnet 2x</string>
+    <string name="reader_model_anime4k_acnet">Anime4K ACNet</string>
+    <string name="reader_model_anime4k_glsl">Anime4K (GLSL)</string>
+    <string name="reader_model_anime4k_acnet_note">Built-in engine and the lightest of the three: single-channel luma CNN, runs fully on the GPU fused pipeline, sharpest output.</string>
+    <string name="reader_model_cunet_note">Cascaded U-Net with 0-3 denoise levels: strongest denoise, best for gritty or heavily compressed scans. Provided by a model pack.</string>
+    <string name="reader_model_glsl_note">Anime4K v4 shader chain with 6 official presets plus thin/darken line toggles. Full-frame pass, so very long strips are pre-scaled to fit the GPU texture limit. Provided by a model pack.</string>
+    <string name="reader_model_pack_hint">This engine needs its model pack installed. Install the matching pack, then re-open this menu.</string>
+    <string name="reader_anime4k_preset">Anime4K preset</string>
+    <string name="reader_anime4k_preset_0">A+A Fast</string>
+    <string name="reader_anime4k_preset_1">A+A HQ</string>
+    <string name="reader_anime4k_preset_2">B+B Fast</string>
+    <string name="reader_anime4k_preset_3">B+B HQ</string>
+    <string name="reader_anime4k_preset_4">C+A Fast</string>
+    <string name="reader_anime4k_preset_5">C+A HQ</string>
+    <string name="reader_anime4k_thin_lines">Thin lines</string>
+    <string name="reader_anime4k_darken_lines">Darken lines</string>
+    <string name="reader_denoise_level">Denoise level</string>
+    <string name="reader_scale_factor">Scale factor</string>
+    <string name="reader_scale_fixed_2x">2x (fixed)</string>
+    <string name="reader_preload_pages">Preload pages</string>
+    <string name="reader_preload_pages_value">%1$d pages</string>
+    <string name="reader_gpu_performance_mode">GPU performance mode</string>
+    <string name="reader_gpu_performance_high">Performance 90%</string>
+    <string name="reader_gpu_performance_balanced">Balanced 50%</string>
+    <string name="reader_gpu_performance_power_saving">Power saving 30%</string>
+    <string name="reader_tile_size">Tile size</string>
+    <string name="reader_precision">Precision</string>
+    <string name="reader_precision_fp16">FP16</string>
+    <string name="reader_precision_fp32">FP32</string>
+    <string name="reader_precision_int8">INT8</string>
+    <string name="reader_precision_bf16">BF16</string>
+    <string name="reader_precision_note">Only FP16/FP32 keeps all models on the GPU. INT8/BF16 are incompatible with the fused Vulkan pipeline and would fall back to CPU.</string>
+    <string name="reader_fp16_arithmetic">FP16 arithmetic</string>
+    <string name="reader_processing_resolution">Max processing resolution</string>
+    <string name="reader_max_resolution">Max resolution</string>
+    <string name="reader_resolution_width">Width (0 unlimited)</string>
+    <string name="reader_resolution_height">Height (0 unlimited)</string>
+    <string name="reader_show_processing_status">Show processing status in bottom-left corner</string>
+    <string name="reader_none">None</string>
+    <string name="reader_status_raw">RAW</string>
+    <string name="reader_status_processed">PROCESSED</string>
+    <string name="reader_status_processing">PROCESSING</string>
+    <string name="reader_status_queued">QUEUED</string>
+    <string name="reader_status_finishing">FINISHING...</string>
+    <string name="reader_status_enhancing">ENHANCING</string>
+    <string name="reader_status_enhancing_progress">ENHANCING... %1$d%%</string>
+    <!-- SY --> 移植自 TachiyomiX：全局处理状态（左下角）。与 reader_status_* 的逐页文案不同，
+         这两个是「worker 现在在算第几页 + 进度 + 还剩几页」，空闲时整条不显示。 -->
+    <string name="reader_enhancing_page">Enhancing page %1$d · %2$d%%</string>
+    <string name="reader_enhancing_page_queued">Enhancing page %1$d · %2$d%% · %3$d queued</string>
+    <!-- SY <-->
+    <!-- SY end -->
+
+    <!-- SY start: 从 mihon_img_upscale 移植 - 云同步（WebDAV） -->
     <string name="action_select">Select</string>
     <string name="cloud_sync">Cloud sync</string>
     <string name="cloud_sync_login">Cloud sync login</string>
@@ -1116,4 +1181,6 @@
     <string name="pref_cloud_sync_concurrent_uploads">Concurrent cloud uploads</string>
     <string name="cloud_sync_uploading_progress">Uploading %1$d%%</string>
     <!-- SY end -->
+    <string name="browse_jump_to_page">Jump to page</string>
+    <string name="browse_page_number_label">Page number</string>
 </resources>

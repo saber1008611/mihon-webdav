@@ -27,6 +27,27 @@ if (Config.includeTelemetry) {
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 
+// SY --> 超分移植：ncnn Android Vulkan SDK 定位。
+// 优先级：-PncnnSdkDir > local.properties 的 ncnn.sdk.dir > 环境变量 NCNN_SDK_DIR > 随仓库自带的 third_party 目录。
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use(::load)
+    }
+}
+
+val bundledNcnnSdkDir = rootProject.file("third_party/ncnn-20260113-android-vulkan")
+
+val ncnnSdkDir = (
+    providers.gradleProperty("ncnnSdkDir").orNull
+        ?: localProperties.getProperty("ncnn.sdk.dir")
+        ?: System.getenv("NCNN_SDK_DIR")
+        ?: bundledNcnnSdkDir.takeIf { it.exists() }?.absolutePath
+    )
+    // Windows 下 CMake 的 -D 参数里反斜杠会被当作转义，统一成正斜杠
+    ?.replace('\\', '/')
+// SY <--
+
 android {
     namespace = "eu.kanade.tachiyomi"
 
@@ -43,6 +64,15 @@ android {
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // SY --> 超分移植：把 ncnn SDK 路径透传给 CMake（CMakeLists 靠它 find_package(ncnn)）。
+        // 找不到也不在这里抛错，交给 CMake 给出更具体的 FATAL_ERROR 提示。
+        externalNativeBuild {
+            cmake {
+                ncnnSdkDir?.let { arguments += "-DNCNN_SDK_DIR=$it" }
+            }
+        }
+        // SY <--
     }
 
     if (System.getenv("MIHON_GITHUB_RELEASE").toBoolean()) {
@@ -173,6 +203,17 @@ android {
         buildConfig = true
         aidl = true
     }
+
+    // SY --> 超分移植：接入 ncnn/Vulkan 超分原生库（libwaifu2x-jni.so）
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    ndkVersion = "28.2.13676358"
+    // SY <--
 
     lint {
         abortOnError = false

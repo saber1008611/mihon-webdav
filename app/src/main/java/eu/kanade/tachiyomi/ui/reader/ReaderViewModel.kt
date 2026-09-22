@@ -54,6 +54,7 @@ import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -302,6 +303,9 @@ class ReaderViewModel(
                 downloadManager.addDownloadsToStartOfQueue(listOf(it))
             }
         }
+        // SY --> 超分移植：离开阅读器时把后台增强队列彻底清空，避免已销毁的章节继续占 GPU。
+        ImageEnhancer.cancelAll("reader view model cleared")
+        // SY <--
     }
 
     /**
@@ -327,6 +331,11 @@ class ReaderViewModel(
                 if (chapterId == -1L) chapterId = initialChapterId
 
                 loader = ChapterLoader(context, downloadManager, downloadProvider, chapterCache, manga, source)
+
+                // SY --> 超分移植：进入阅读器先把增强队列与目标页重置到本章起始页。
+                // 上一个会话可能还留着别的章节的任务，不清掉会和新章节抢 GPU。
+                ImageEnhancer.reset(0)
+                // SY <--
 
                 loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
             } catch (e: Throwable) {

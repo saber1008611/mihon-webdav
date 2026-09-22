@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.ui.graphics.BlendMode
 import dev.icerock.moko.resources.StringResource
 import dev.zacsweers.metro.AppScope
+import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import tachiyomi.core.common.preference.Preference
@@ -15,7 +16,11 @@ import tachiyomi.i18n.MR
 @Inject
 @SingleIn(AppScope::class)
 class ReaderPreferences(
-    preferenceStore: PreferenceStore,
+    // SY --> 超分移植：官方把 preferenceStore 写成「非属性」构造参数，只能在属性初始化器里访问。
+    // 我们新增的 realCuganXxx() 是**方法**，方法体里访问不到非属性参数（会 Unresolved reference），
+    // 因此这里加上 private val 提升为属性。对外可见性不变（仅本类可见）。
+    private val preferenceStore: PreferenceStore,
+    // SY <--
 ) {
 
     // region General
@@ -283,6 +288,62 @@ class ReaderPreferences(
         ALWAYS(MR.strings.dual_page_view_always),
         WIDE(MR.strings.dual_page_view_wide),
     }
+
+    // SY --> 超分（由 mihon_img_upscale 移植）：画面增强相关偏好。
+    // mihon-webdav「可达式双引擎」版保留 Anime4K ACNet(6) / waifu2x CUnet(7) /
+    // Anime4K GLSL(8)，编号见 Waifu2x.MODEL_*；其它编号一律由 Waifu2x.sanitizeModel
+    // 收敛到这三款之一。键名沿用旧分支，便于老用户直接继承配置。
+    // 其中 6 随主包内置，7/8 由模型包提供。
+
+    fun realCuganEnabled() = preferenceStore.getBoolean("pref_realcugan_enabled", false)
+
+    /** 0: No Denoise, 1: Denoise 1x, 2: Denoise 2x, 3: Denoise 3x（仅 CUnet 有档位） */
+    fun realCuganNoiseLevel() = preferenceStore.getInt("pref_realcugan_noise_level", 0)
+
+    /** 输出倍率；三款模型都只支持 2x，实际值由 ImageEnhancementCache.getEffectiveScale 收敛 */
+    fun realCuganScale() = preferenceStore.getInt("pref_realcugan_scale", 2)
+
+    /**
+     * 默认 Anime4K ACNet：三款里**唯一随主包内置**的，所以无论用户有没有装模型包，
+     * 默认值一定可用（默认到 7/8 会让没装包的用户开箱即落到「所有引擎都未安装」）。
+     */
+    fun realCuganModel() = preferenceStore.getInt("pref_realcugan_model", Waifu2x.MODEL_ANIME4K_ACNET)
+
+    fun realCuganPreloadSize() = preferenceStore.getInt("pref_realcugan_preload_size", 3)
+
+    /** 0: 全速, 1: 50%, 2: 30%（越省电越慢） */
+    fun realCuganPerformanceMode() = preferenceStore.getInt("pref_realcugan_performance_mode", 0)
+
+    fun realCuganTileSize() = preferenceStore.getInt("pref_realcugan_tile_size", Waifu2x.DEFAULT_TILE_SIZE)
+
+    /** 0: FP16, 1: FP32, 2: INT8, 3: BF16 */
+    fun realCuganPrecision() = preferenceStore.getInt("pref_realcugan_precision", 0)
+
+    fun realCuganFp16Arithmetic() = preferenceStore.getBoolean("pref_realcugan_fp16_arithmetic", false)
+
+    // SY --> Anime4K GLSL 专属：6 个官方模式预设 + 两个线条开关。
+    // 预设编号与 [Anime4KPresets.PRESETS] 的 id 一一对应；非法值由
+    // Anime4KPresets.sanitizePreset 收敛。两条开关只影响链尾追加哪支着色器。
+    /** 0..5，见 Anime4KPresets.PRESETS（A+A / B+B / C+A × Fast/HQ）。 */
+    fun realCuganAnime4kPreset() = preferenceStore.getInt("pref_realcugan_anime4k_preset", 0)
+
+    /** 「细化线条」：链尾追加 Thin_HQ。 */
+    fun realCuganAnime4kThinLines() = preferenceStore.getBoolean("pref_realcugan_anime4k_thin", false)
+
+    /** 「线条加黑」：链尾追加 Darken_HQ。 */
+    fun realCuganAnime4kDarkenLines() = preferenceStore.getBoolean("pref_realcugan_anime4k_darken", false)
+    // SY <--
+
+    fun realCuganMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_max_size_width", 1600)
+
+    fun realCuganMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_max_size_height", 1600)
+
+    fun realCuganSkipMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_skip_max_size_width", 0)
+
+    fun realCuganSkipMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_skip_max_size_height", 0)
+
+    fun realCuganShowStatus() = preferenceStore.getBoolean("pref_realcugan_show_status", false)
+    // SY <--
 
     companion object {
         const val WEBTOON_PADDING_MIN = 0

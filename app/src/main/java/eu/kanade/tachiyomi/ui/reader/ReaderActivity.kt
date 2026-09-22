@@ -42,6 +42,7 @@ import androidx.core.transition.doOnEnd
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.transition.platform.MaterialContainerTransform
 import dev.zacsweers.metro.Inject
@@ -81,6 +82,9 @@ import eu.kanade.tachiyomi.util.system.readerBackgroundColor
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
+import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -90,6 +94,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import logcat.LogPriority
 import mihon.app.di.AppGraph
 import mihon.core.metro.metroGraph
@@ -97,6 +104,7 @@ import tachiyomi.core.common.Constants
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.util.collectAsState
@@ -107,6 +115,30 @@ class ReaderActivity : BaseActivity() {
     private val graph: AppGraph by lazy { metroGraph() }
 
     companion object {
+        /**
+         * SY --> 触摸后让超分「让路」的时长，400ms。
+         *
+         * 原生侧在 ui_busy 为真时**完全停住**（waifu2x.cpp 里 while(ui_busy) sleep(8ms)，
+         * 一块 tile 都不提交），从而把 GPU 让给 UI 渲染线程，消除翻页 / 缩放时的卡顿。
+         * dispatchTouchEvent 每收到一个事件都会 setUiBusy(true) 并重置这个定时器。
+         * 400ms 足以盖住手指抬起后的惯性滑动动画（一般 300~500ms）。
+         *
+         * 移植自 mihon_img_upscale（TachiyomiX 同款机制）。本分支之前**完全遗漏了这套接线**，
+         * 导致超分一直占满 GPU、阅读器严重卡顿、且 GPU 被推理与渲染互相争抢而两头都慢。
+         * SY <--
+         */
+        private const val UI_BUSY_COOLDOWN_MS = 400L
+
+        /**
+         * SY --> 左下角超分状态的刷新间隔，200ms。
+         *
+         * 数值直接对齐 TachiyomiX 的实现：它的 `produceState` 内部就是
+         * `while(true) { value = Waifu2x.getProgressPercent(); delay(200) }`。
+         * 百分比只能靠轮询拿（原生侧只暴露一个 getter），200ms 是观感与开销的平衡点。
+         * SY <--
+         */
+        private const val ENHANCEMENT_STATUS_POLL_INTERVAL_MS = 200L
+
         fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
@@ -133,6 +165,10 @@ class ReaderActivity : BaseActivity() {
     private var menuToggleToast: Toast? = null
     private var readingModeToast: Toast? = null
     private val displayRefreshHost = DisplayRefreshHost()
+
+    /** SY --> 超分「让路」定时任务（移植自 mihon_img_upscale）：触摸后延迟复位 ui_busy。 */
+    private var uiBusyJob: Job? = null
+    // SY <--
 
     private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, window.decorView) }
 
@@ -182,6 +218,46 @@ class ReaderActivity : BaseActivity() {
         )
 
         config = ReaderConfig()
+
+        // SY --> 预热当前选中的超分模型（移植自 mihon_img_upscale）。
+        // 原生 load() 首次调用要解 param/bin、建 Vulkan 卷积 pipeline，耗时几百毫秒；
+        // 把这段代价从「第一页的等待」挪到刚进阅读器时、放在 IO 线程上，不阻塞首帧。
+        // ensureLoaded 内部 per-model 幂等，解码器随后再调用只会命中缓存分支。
+        if (readerPreferences.realCuganEnabled().get()) {
+            lifecycleScope.launchIO {
+                val model = Waifu2x.sanitizeModel(readerPreferences.realCuganModel().get())
+                val scale = ImageEnhancementCache.getEffectiveScale(
+                    model,
+                    readerPreferences.realCuganScale().get(),
+                )
+                Waifu2x.ensureLoaded(
+                    context = this@ReaderActivity,
+                    model = model,
+                    noise = readerPreferences.realCuganNoiseLevel().get(),
+                    scale = scale,
+                    tileSleepMs = when (readerPreferences.realCuganPerformanceMode().get()) {
+                        1 -> 5
+                        2 -> 15
+                        else -> 0
+                    },
+                    tileSize = readerPreferences.realCuganTileSize().get(),
+                    precision = Waifu2x.sanitizePrecision(readerPreferences.realCuganPrecision().get()),
+                    fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
+                    // SY --> GLSL 路线要靠这三个参数决定 shader 链；漏传会让预热
+                    // 编译出一条与解码器实际使用的链**不同**的链，白白浪费一次编译。
+                    anime4kPreset = readerPreferences.realCuganAnime4kPreset().get(),
+                    anime4kThinLines = readerPreferences.realCuganAnime4kThinLines().get(),
+                    anime4kDarkenLines = readerPreferences.realCuganAnime4kDarkenLines().get(),
+                    // SY <--
+                )
+            }
+        }
+        // SY <--
+
+        // SY --> 移植自 TachiyomiX：左下角的全局超分状态显示（文案 + 两条进度条）。
+        // SY <--
+        startEnhancementStatusObserver()
+
         setMenuVisibility(viewModel.state.value.menuVisible)
 
         // Finish when incognito mode is disabled
@@ -337,6 +413,8 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
      */
     override fun onDestroy() {
+        uiBusyJob?.cancel()
+        Waifu2x.setUiBusy(false)
         super.onDestroy()
         viewModel.state.value.viewer?.destroy()
         config = null
@@ -350,6 +428,66 @@ class ReaderActivity : BaseActivity() {
         }
         super.onPause()
     }
+
+    /**
+     * SY --> 超分「让路」机制（移植自 mihon_img_upscale / TachiyomiX）。
+     *
+     * 阅读器里每一个触摸事件都会经过这里：先把原生超分标记为 busy（GPU 推理循环在
+     * ui_busy 为真时完全停住、一块 tile 都不提交），再用一个 400ms 定时器复位。
+     * 这样翻页 / 缩放 / 横滑时 GPU 全让给 UI 渲染线程，消除卡顿；手指停下 400ms 后
+     * 超分自动恢复，不浪费空闲算力。
+     *
+     * ⚠️ 条漫 / 竖向连续模式是**例外**，见 [onUiInteracted]。
+     * SY <--
+     */
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        onUiInteracted()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /**
+     * SY --> 标记一次用户交互：超分让路并在冷却后复位（菜单可见时保持让路）。
+     *
+     * **连续滚动模式（条漫 / 竖向连续）不让路。**
+     *
+     * 让路机制的前提是「一次交互 = 一个短手势」（点一下、翻一页、双指缩放）：400ms
+     * 冷却的相对代价可以忽略。但条漫模式的阅读方式就是**按着屏幕连续滚动几十秒**，
+     * 每一次 MOVE 事件都会把 400ms 冷却窗重新计一遍 —— 等于整段阅读时间里原生推理
+     * 被 100% 停掉。用户看到的就是「一滑动超分就停、手一离开才继续」，而条漫恰恰
+     * 是「一边滚一边读」的模式，超分进度永远追不上。
+     *
+     * 所以连续模式下触摸不再给原生设 busy：推理照常按队列推进（每个引擎自身的
+     * 节流已经保证了不抢满 GPU）。菜单打开（[setMenuVisibility]）时的让路仍然保留。
+     * SY <--
+     */
+    private fun onUiInteracted() {
+        if (isContinuousReadingMode()) {
+            uiBusyJob?.cancel()
+            uiBusyJob = null
+            // 菜单打开时仍然让路（那一刻 UI 才是主角，见 setMenuVisibility）；
+            // 菜单没开就一律不让路 —— 滑动期间超分照常按队列推进。
+            Waifu2x.setUiBusy(viewModel.state.value.menuVisible)
+            return
+        }
+        Waifu2x.setUiBusy(true)
+        uiBusyJob?.cancel()
+        uiBusyJob = lifecycleScope.launch {
+            delay(UI_BUSY_COOLDOWN_MS)
+            if (!viewModel.state.value.menuVisible) {
+                Waifu2x.setUiBusy(false)
+            }
+        }
+    }
+
+    /**
+     * SY --> 当前阅读器是否为「连续滚动」（条漫 WEBTOON / 竖向连续 CONTINUOUS_VERTICAL）。
+     *
+     * 直接用阅读模式偏好判断，而不是去 as 具体 viewer：`ReadingMode.toViewer` 里
+     * 这两种模式（无论高画质渲染器开没开）都映射到连续型 viewer，语义一一对应。
+     * SY <--
+     */
+    private fun isContinuousReadingMode(): Boolean =
+        ReadingMode.fromPreference(viewModel.getMangaReadingMode()).type == ReadingMode.ViewerType.Webtoon
 
     /**
      * Set menu visibility again on activity resume to apply immersive mode again if needed.
@@ -527,9 +665,70 @@ class ReaderActivity : BaseActivity() {
     private fun setMenuVisibility(visible: Boolean) {
         viewModel.showMenus(visible)
         if (visible) {
+            // SY --> 菜单（含设置面板）打开时让超分彻底停住，避免推理抢 GPU 导致菜单卡顿。
+            uiBusyJob?.cancel()
+            Waifu2x.setUiBusy(true)
+            // SY <--
             windowInsetsController.show(WindowInsetsCompat.Type.systemBars())
-        } else if (readerPreferences.fullscreen.get()) {
-            windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            // SY --> 菜单关闭即视为一次交互：先让路 400ms 再复位（见 onUiInteracted）。
+            onUiInteracted()
+            // SY <--
+            if (readerPreferences.fullscreen.get()) {
+                windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    /**
+     * SY --> 移植自 TachiyomiX：左下角**全局**超分状态显示。
+     *
+     * 参考实现（`ReaderPageIndicatorKt.ReaderProcessingStatusIndicator`）的逻辑：
+     *   1. `activePageIndex < 0` → 直接不渲染（空闲即隐藏）；
+     *   2. 文案 = 有排队 ? 「增强中 第 N 页 · P% · 待处理 Q 页」: 「增强中 第 N 页 · P%」，N 从 1 开始；
+     *   3. 两条 3dp 细进度条：本页 P/100、整批 processed/batch；
+     *   4. P 来自 `Waifu2x.getProgressPercent()`，每 200ms 轮询一次。
+     *
+     * 本工程是 View 体系（不是 Compose），所以用一个 200ms 的轮询循环达成同样的效果。
+     * 只有「开关打开 + 确实在算」时才显示 —— 开关沿用原有的
+     * `pref_realcugan_show_status`，与超分总开关 `realCuganEnabled` 一起生效。
+     *
+     * 这里刻意**逐页状态文案全部交给这一个全局视图**，`ReaderPageImageView` 不再各自
+     * 维护「排队中 / 收尾中 / 已增强 / 原图」—— 那正是「增强中 → 排队中 → 排队中 →
+     * 已增强」来回跳的来源。
+     * SY <--
+     */
+    private fun startEnhancementStatusObserver() {
+        val statusView = binding.enhancementStatus
+        lifecycleScope.launchIO {
+            var lastSignature: String? = null
+            var lastVisible = false
+            while (isActive) {
+                val enabled = readerPreferences.realCuganEnabled().get() &&
+                    readerPreferences.realCuganShowStatus().get()
+                val status = ImageEnhancer.status.value
+                val visible = enabled && status.activePageIndex >= 0
+
+                val percent = if (visible) Waifu2x.getProgressPercent().coerceIn(0, 100) else 0
+                val signature = if (visible) {
+                    "${status.activePageIndex}|${status.queuedCount}|" +
+                        "${status.sessionProcessedCount}|${status.sessionBatchCount}|$percent"
+                } else {
+                    null
+                }
+
+                if (signature != lastSignature || visible != lastVisible) {
+                    lastSignature = signature
+                    lastVisible = visible
+                    withUIContext {
+                        statusView.isVisible = visible
+                        if (visible) {
+                            statusView.render(status, percent)
+                        }
+                    }
+                }
+                delay(ENHANCEMENT_STATUS_POLL_INTERVAL_MS)
+            }
         }
     }
 

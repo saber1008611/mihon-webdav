@@ -747,6 +747,9 @@
     <string name="onboarding_permission_notifications_description">用来发送书架更新等通知。</string>
     <string name="onboarding_storage_help_info">如果你是从旧版更新而来，可以查看存储指南了解详情。</string>
     <string name="onboarding_storage_help_action">存储指南</string>
+    <string name="onboarding_storage_all_files_access">「所有文件访问」权限</string>
+    <string name="onboarding_storage_all_files_access_description">Android 11 及以上需要授予该权限，%1$s 才能直接读写存储目录。未授予时，只能用系统文件选择器挑选的文件夹。</string>
+    <string name="onboarding_storage_all_files_access_granted">已授予</string>
     <string name="pref_storage_location">存储位置</string>
     <string name="onboarding_storage_action_select">选择文件夹</string>
     <string name="onboarding_storage_info">选择一个文件夹供 %1$s 存放下载章节、备份文件等。 \n \n推荐使用一个专门的文件夹。 \n \n已选文件夹：%2$s</string>
@@ -901,7 +904,7 @@
     <string name="downloading_with_progress">正在下载… (%d%%)</string>
     <string name="pref_filter_update_categories_details">同时属于包含和排除分类的作品更新将不予显示。</string>
     <string name="pref_filter_upcoming_categories_details">同时属于包含和排除分类的标题将不予显示。</string>
-    <!-- SY --> 从 mihon_img_upscale 移植：下载章节的 WebDAV 云同步。 -->
+    <!-- SY start: 云同步（WebDAV）与超分状态 -->
     <string name="action_select">选择</string>
     <string name="cloud_sync">云盘同步</string>
     <string name="cloud_sync_login">云盘同步登录</string>
@@ -917,5 +920,63 @@
     <string name="cloud_sync_delete_after_upload">同步后删除本地文件</string>
     <string name="pref_cloud_sync_concurrent_uploads">并行云上传数</string>
     <string name="cloud_sync_uploading_progress">正在上传 %1$d%%</string>
+    <string name="reader_status_raw">原图</string>
+    <string name="reader_status_processed">已增强</string>
+    <string name="reader_status_processing">处理中</string>
+    <string name="reader_status_queued">排队中</string>
+    <string name="reader_status_finishing">收尾中…</string>
+    <string name="reader_status_enhancing">增强中</string>
+    <string name="reader_status_enhancing_progress">增强中… %1$d%%</string>
+    <!-- SY --> 移植自 TachiyomiX：全局处理状态（左下角）。空闲时不显示。 -->
+    <string name="reader_enhancing_page">增强中 第 %1$d 页 · %2$d%%</string>
+    <string name="reader_enhancing_page_queued">增强中 第 %1$d 页 · %2$d%% · 待处理 %3$d 页</string>
+    <!-- SY <-->
+    <string name="reader_show_processing_status">在左下角显示处理状态</string>
+    <!-- SY start: 超分设置项（此前只写了 base，中文环境回退成英文） -->
+    <string name="reader_image_enhancement">画面增强</string>
+    <string name="reader_model">模型</string>
+    <!-- SY 旧模型名，代码已不再引用，保留以免与其它语言文件不一致（此处不写箭头，避免注释内出现连续两个连字符） -->
+    <string name="reader_model_sudo_ultracompact">AnimeJaNai 超紧凑 2 倍</string>
+    <string name="reader_model_waifu2x_fast">Waifu2x（快速）</string>
+    <string name="reader_model_waifu2x_cunet">Waifu2x CUnet 2 倍</string>
+    <string name="reader_model_anime4k_acnet">Anime4K ACNet</string>
+    <string name="reader_model_anime4k_glsl">Anime4K（GLSL）</string>
+    <string name="reader_model_anime4k_acnet_note">内置引擎，三款里最轻：单通道亮度网络，全程走 GPU 融合管线，画质最锐利。</string>
+    <string name="reader_model_cunet_note">级联 U-Net，带 0–3 档降噪：降噪最激进，适合噪点多、压缩重的图源。需安装对应模型包。</string>
+    <string name="reader_model_glsl_note">Anime4K v4 着色器链，6 个官方预设 + 「细化线条 / 线条加黑」两个开关。整图处理，超长条图会先缩到 GPU 纹理上限内。需安装对应模型包。</string>
+    <string name="reader_model_pack_hint">该引擎需要先安装对应模型包。装好后重新打开本菜单即可选用。</string>
+    <string name="reader_anime4k_preset">Anime4K 预设</string>
+    <string name="reader_anime4k_preset_0">A+A 快速</string>
+    <string name="reader_anime4k_preset_1">A+A 高质量</string>
+    <string name="reader_anime4k_preset_2">B+B 快速</string>
+    <string name="reader_anime4k_preset_3">B+B 高质量</string>
+    <string name="reader_anime4k_preset_4">C+A 快速</string>
+    <string name="reader_anime4k_preset_5">C+A 高质量</string>
+    <string name="reader_anime4k_thin_lines">细化线条</string>
+    <string name="reader_anime4k_darken_lines">线条加黑</string>
+    <string name="reader_denoise_level">降噪强度</string>
+    <string name="reader_scale_factor">放大倍数</string>
+    <string name="reader_scale_fixed_2x">2 倍（固定）</string>
+    <string name="reader_preload_pages">预载页数</string>
+    <string name="reader_preload_pages_value">%1$d 页</string>
+    <string name="reader_gpu_performance_mode">GPU 性能模式</string>
+    <string name="reader_gpu_performance_high">高性能 90%</string>
+    <string name="reader_gpu_performance_balanced">均衡 50%</string>
+    <string name="reader_gpu_performance_power_saving">省电 30%</string>
+    <string name="reader_tile_size">分块大小</string>
+    <string name="reader_precision">计算精度</string>
+    <string name="reader_precision_fp16">FP16</string>
+    <string name="reader_precision_fp32">FP32</string>
+    <string name="reader_precision_int8">INT8</string>
+    <string name="reader_precision_bf16">BF16</string>
+    <string name="reader_precision_note">只有 FP16 / FP32 能让全部模型走 GPU。INT8 / BF16 与融合 Vulkan 管线不兼容，会退回 CPU。</string>
+    <string name="reader_fp16_arithmetic">FP16 运算</string>
+    <string name="reader_processing_resolution">最大处理分辨率</string>
+    <string name="reader_max_resolution">最大分辨率</string>
+    <string name="reader_resolution_width">宽（0 为不限制）</string>
+    <string name="reader_resolution_height">高（0 为不限制）</string>
+    <string name="reader_none">无</string>
     <!-- SY end -->
+    <string name="browse_jump_to_page">跳转到第几页</string>
+    <string name="browse_page_number_label">页码</string>
 </resources>

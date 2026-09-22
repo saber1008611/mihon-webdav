@@ -15,11 +15,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -34,6 +37,7 @@ import dev.zacsweers.metrox.viewmodel.assistedMetroViewModel
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
+import eu.kanade.presentation.browse.components.BrowseSourcePageDialog
 import eu.kanade.presentation.browse.components.RemoveMangaDialog
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
@@ -107,6 +111,9 @@ data class BrowseSourceScreen(
         val haptic = LocalHapticFeedback.current
         val uriHandler = LocalUriHandler.current
         val snackbarHostState = remember { SnackbarHostState() }
+        // SY --> 跳转到页码对话框的可见状态
+        var showPageDialog by remember { mutableStateOf(false) }
+        // SY <--
 
         val onHelpClick = { uriHandler.openUri(LocalSource.HELP_URL) }
         val onWebViewClick = f@{
@@ -211,6 +218,20 @@ data class BrowseSourceScreen(
                 }
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+            // SY --> 右下角页码 FAB：点击弹出跳转对话框
+            floatingActionButton = {
+                if (source !is LocalSource) {
+                    SmallFloatingActionButton(
+                        onClick = { showPageDialog = true },
+                    ) {
+                        Text(
+                            text = "# ${state.browsePage}",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+            },
+            // SY <--
         ) { paddingValues ->
             BrowseSourceContent(
                 source = source,
@@ -236,6 +257,9 @@ data class BrowseSourceScreen(
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
                 },
+                // SY --> 滚动联动：把首个可见 manga 回传给 ViewModel 以更新 FAB 页码
+                onVisibleMangaChanged = viewModel::updateVisibleManga,
+                // SY <--
             )
         }
 
@@ -291,6 +315,16 @@ data class BrowseSourceScreen(
             }
             else -> {}
         }
+
+        // SY --> 跳转到页码对话框
+        if (showPageDialog) {
+            BrowseSourcePageDialog(
+                currentPage = state.browsePage,
+                onDismissRequest = { showPageDialog = false },
+                onConfirm = viewModel::jumpToPage,
+            )
+        }
+        // SY <--
 
         LaunchedEffect(Unit) {
             queryEvent.receiveAsFlow()

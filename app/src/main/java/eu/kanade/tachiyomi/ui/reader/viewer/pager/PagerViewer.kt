@@ -52,6 +52,13 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private val adapter = PagerViewerAdapter(this)
 
+    init {
+        // SY --> 翻页模式：允许超分队列抢占（一屏一页，用户翻过去后原来那页的任务
+        // 确实可以丢弃）。条漫模式下 WebtoonViewer 会把它设回 true 的相反值。
+        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.setContinuousMode(false)
+        // SY <--
+    }
+
     /**
      * Currently active item. It can be a chapter page or a chapter transition.
      */
@@ -226,6 +233,11 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun onReaderPageSelected(page: ReaderPage, allowPreload: Boolean, forward: Boolean) {
         val pages = page.chapter.pages ?: return
         logcat { "onReaderPageSelected: ${page.number}/${pages.size}" }
+        // SY --> 目标页必须由 Viewer 统一上报，Holder 已关闭自行上报
+        // （见 PagerPageHolder.controlsCurrentPageSelection = false）。
+        eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView.currentGlobalPageIndex = page.index
+        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.reprioritizeAround(page.index)
+        // SY <--
         activity.onPageSelected(page)
 
         // Notify holder of page change

@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
+import eu.kanade.tachiyomi.ui.reader.viewer.enhanceKey
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
@@ -82,6 +83,15 @@ class WebtoonPageHolder(
 
     init {
         refreshLayoutParams()
+
+        // SY --> 条漫模式下禁止单个页面视图决定「当前页」。
+        //
+        // 条漫一屏会同时绑定好几页（含 RecyclerView 预载页），若让每个视图各自上报
+        // 目标页并抢占队列，最后绑定的那个预载页就会霸占目标页、把正在推理的页顶掉，
+        // 表现就是「队列明显有问题、同一页反复超分、进度从零开始」。
+        // 目标页改由 WebtoonViewer.onPageSelected 统一上报（对应上游同名做法）。
+        frame.controlsCurrentPageSelection = false
+        // SY <--
 
         frame.onImageLoaded = { onImageDecoded() }
         frame.onImageLoadError = { error -> setError(error) }
@@ -187,7 +197,8 @@ class WebtoonPageHolder(
     private suspend fun setImage() {
         progressIndicator.setProgress(0)
 
-        val streamFn = page?.stream ?: return
+        val currentPage = page ?: return
+        val streamFn = currentPage.stream ?: return
 
         try {
             val (source, isAnimated) = withIOContext {
@@ -204,6 +215,13 @@ class WebtoonPageHolder(
                         minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
                         cropBorders = viewer.config.imageCropBorders,
                     ),
+                    // SY --> 超分移植：开启增强时把这一页在缓存里的定位信息传下去
+                    enhanceKey = currentPage.enhanceKey(
+                        viewer.config.enhanceEnabled && !usesTransformedEnhancedDisplay(),
+                    ),
+                    streamFn = currentPage.stream,
+                    readerPage = currentPage,
+                    // SY <--
                 )
                 removeErrorLayout()
             }
@@ -214,6 +232,12 @@ class WebtoonPageHolder(
             }
         }
     }
+
+    // SY --> 超分移植：与 PagerPageHolder 同样的说明 —— 变换后的显示不做增强。
+    private fun usesTransformedEnhancedDisplay(): Boolean {
+        return viewer.config.dualPageSplit || viewer.config.dualPageRotateToFit
+    }
+    // SY <--
 
     private fun process(imageSource: BufferedSource): BufferedSource {
         if (viewer.config.dualPageRotateToFit) {

@@ -1,11 +1,15 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
+import android.content.Context
+import eu.kanade.tachiyomi.App
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +21,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
+import uy.kohesive.injekt.injectLazy
 import java.util.concurrent.PriorityBlockingQueue
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -33,6 +38,13 @@ internal class HttpPageLoader(
 ) : PageLoader() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // SY --> 超分移植：预载时顺手把这一页丢进后台增强队列（低优先级）。
+    private val context: Context by injectLazy()
+
+    private val readerPreferencesOrNull: ReaderPreferences?
+        get() = (context.applicationContext as? App)?.graph?.readerPreferences
+    // SY <--
 
     /**
      * A queue used to manage requests one by one while allowing priorities.
@@ -185,6 +197,17 @@ internal class HttpPageLoader(
             }
 
             page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }
+
+            // SY --> 超分移植：预载页以低优先级入队。
+            //
+            // 这里只是「顺手起个头」，不代表会立刻跑：ImageEnhancer 是单线程 + 优先队列，
+            // 用户真正翻到的那一页会以高优先级抢占。而且 enhanceLazy 开头有一道去重闸门，
+            // 同一页无论被 loader 预载几次、被视图请求几次，都只会真的进一次模型。
+            if (readerPreferencesOrNull?.realCuganEnabled()?.get() == true) {
+                runCatching { ImageEnhancer.enhance(context, page, highPriority = false) }
+            }
+            // SY <--
+
             page.status = Page.State.Ready
         } catch (e: Throwable) {
             page.status = Page.State.Error(e)

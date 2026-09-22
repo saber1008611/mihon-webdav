@@ -1,0 +1,150 @@
+#version 450
+
+// SY --> mihon-webdav: 单通道（luma）模型的融合后处理。
+//
+// 输入：
+//   binding 0 —— 网络的单通道输出 Y'（2x 亮度平面，带 tile 内外偏移）
+//   binding 2 —— 原始打包 RGBA8 全图（用来取色度）
+// 输出：
+//   binding 1 —— 打包 RGBA8 目标图
+//
+// 合成公式与 CPU staged 路径逐字一致（见 waifu2x.cpp 的 luma 分支）：
+//   y_base = 0.299*R + 0.587*G + 0.114*B        （R/G/B 为 0..1）
+//   cb = (B - y_base) / 1.772
+//   cr = (R - y_base) / 1.402
+//   R' = Y' + 1.402*cr
+//   B' = Y' + 1.772*cb
+//   G' = Y' - 0.7141*cr - 0.3441*cb
+//
+// 色度取自「全图」而不是本 tile：相邻 tile 在重叠区拿到的色度因此完全一致，
+// 不可能出现拼缝。插值核沿用 ncnn Interp(bicubic) 的 A = -0.75、align_corner=0，
+// 即 fx = (dx + 0.5) * (w / outw) - 0.5（2x 时 fx = dx/2 - 0.25），
+// 与 CPU 路径的 ncnn::resize_bicubic 同核。
+//
+// 每个输出像素共 16 次打包读取（4x4 tap，一次读回 RGBA 四个字节）：
+// 先横向四次三次插值，再纵向合成一次，比逐通道采样省 4 倍访存。
+// SY <--
+
+#ifdef FUSED_FP16
+#extension GL_EXT_shader_16bit_storage : require
+#define storage_t float16_t
+#else
+#define storage_t float
+#endif
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer bottom_blob {
+    storage_t bottom_blob_data[];
+};
+layout(std430, binding = 1) writeonly buffer top_blob {
+    float top_blob_data[];
+};
+layout(std430, binding = 2) readonly buffer packed_input {
+    float packed_input_data[];
+};
+
+layout(push_constant) uniform parameter {
+    int w;             // Y' 平面宽（= 本 tile 的输出宽）
+    int h;
+    int cstep;
+    int outw;          // 目标图宽（2x 全图）
+    int outh;
+    int src_offset_x;
+    int src_offset_y;
+    int offset_x;      // 本 tile 在目标图中的左上角 x（= tile_x * scale）
+    int offset_y;
+    int copy_w;
+    int copy_h;
+    int scale;         // 2
+    int src_w;         // 原图宽
+    int src_h;
+    int has_alpha;
+    int grayscale;
+} p;
+
+// 读一个打包像素，越界按边缘复制（与原 3 通道版 preproc 的 clamp 一致）
+vec4 fetch_rgba(int x, int y) {
+    int cx = clamp(x, 0, p.src_w - 1);
+    int cy = clamp(y, 0, p.src_h - 1);
+    uint packed_pixel = floatBitsToUint(packed_input_data[cy * p.src_w + cx]);
+    return vec4(
+        float(packed_pixel & 255u),
+        float((packed_pixel >> 8) & 255u),
+        float((packed_pixel >> 16) & 255u),
+        float((packed_pixel >> 24) & 255u)
+    );
+}
+
+// ncnn Interp 的三次权重（A = -0.75），与 src/layer/interp.cpp:interpolate_cubic 同式。
+// 返回前 3 个权重，第 4 个由 1 减去它们得到。
+vec3 cubic_weights3(float f) {
+    const float A = -0.75;
+    float f0 = f + 1.0;
+    float f1 = f;
+    float f2 = 1.0 - f;
+    return vec3(
+        A * f0 * f0 * f0 - 5.0 * A * f0 * f0 + 8.0 * A * f0 - 4.0 * A,
+        (A + 2.0) * f1 * f1 * f1 - (A + 3.0) * f1 * f1 + 1.0,
+        (A + 2.0) * f2 * f2 * f2 - (A + 3.0) * f2 * f2 + 1.0
+    );
+}
+
+// 某一行的横向三次插值：tap 落在 ix-1 .. ix+2
+vec4 row_rgba(int ix, int yy, vec4 w) {
+    return w.x * fetch_rgba(ix - 1, yy)
+         + w.y * fetch_rgba(ix + 0, yy)
+         + w.z * fetch_rgba(ix + 1, yy)
+         + w.w * fetch_rgba(ix + 2, yy);
+}
+
+void main() {
+    int gx = int(gl_GlobalInvocationID.x);
+    int gy = int(gl_GlobalInvocationID.y);
+    if (gx >= p.copy_w || gy >= p.copy_h) return;
+
+    // ---- 网络输出：单通道亮度 Y'（0..1）----
+    int sx = gx + p.src_offset_x;
+    int sy = gy + p.src_offset_y;
+    float y = float(bottom_blob_data[sy * p.w + sx]);
+
+    // ---- 色度：在「全图 2x 输出坐标」上做双三次采样 ----
+    float fx = (float(p.offset_x + gx) + 0.5) / float(p.scale) - 0.5;
+    float fy = (float(p.offset_y + gy) + 0.5) / float(p.scale) - 0.5;
+    int ix = int(floor(fx));
+    int iy = int(floor(fy));
+
+    vec3 wx3 = cubic_weights3(fx - float(ix));
+    vec4 wx = vec4(wx3, 1.0 - wx3.x - wx3.y - wx3.z);
+    vec3 wy3 = cubic_weights3(fy - float(iy));
+    vec4 wy = vec4(wy3, 1.0 - wy3.x - wy3.y - wy3.z);
+
+    vec4 r0 = row_rgba(ix, iy - 1, wx);
+    vec4 r1 = row_rgba(ix, iy + 0, wx);
+    vec4 r2 = row_rgba(ix, iy + 1, wx);
+    vec4 r3 = row_rgba(ix, iy + 2, wx);
+    vec4 chroma = clamp(wy.x * r0 + wy.y * r1 + wy.z * r2 + wy.w * r3,
+                        vec4(0.0), vec4(255.0));
+
+    // ---- BT.601 分量合成（与 CPU staged 路径同式）----
+    const float inv255 = 1.0 / 255.0;
+    float r0n = chroma.r * inv255;
+    float g0n = chroma.g * inv255;
+    float b0n = chroma.b * inv255;
+    float y_base = 0.299 * r0n + 0.587 * g0n + 0.114 * b0n;
+    float cb = (b0n - y_base) * 0.564334; // 1 / 1.772
+    float cr = (r0n - y_base) * 0.713267; // 1 / 1.402
+    float r = y + 1.402 * cr;
+    float b = y + 1.772 * cb;
+    float g = y - 0.7141 * cr - 0.3441 * cb;
+
+    uvec3 rgb = uvec3(clamp(floor(vec3(r, g, b) * 255.0 + 0.5),
+                            vec3(0.0), vec3(255.0)));
+    float alpha = 255.0;
+    if (p.has_alpha != 0) {
+        alpha = clamp(floor(chroma.a + 0.5), 0.0, 255.0);
+    }
+    uint packed_pixel = rgb.r | (rgb.g << 8) | (rgb.b << 16)
+                      | (uint(alpha) << 24);
+    int output_index = (gy + p.offset_y) * p.outw + gx + p.offset_x;
+    top_blob_data[output_index] = uintBitsToFloat(packed_pixel);
+}
