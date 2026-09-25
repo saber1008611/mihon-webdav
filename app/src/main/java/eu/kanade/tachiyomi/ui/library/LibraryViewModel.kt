@@ -497,6 +497,7 @@ class LibraryViewModel(
             DownloadAction.NEXT_25_CHAPTERS -> downloadNextChapters(25)
             DownloadAction.UNREAD_CHAPTERS -> downloadNextChapters(null)
             DownloadAction.BOOKMARKED_CHAPTERS -> downloadBookmarkedChapters()
+            DownloadAction.ALL_CHAPTERS -> downloadAllChapters()
         }
         clearSelection()
     }
@@ -528,6 +529,27 @@ class LibraryViewModel(
         viewModelScope.launchNonCancellable {
             mangas.forEach { manga ->
                 val chapters = getBookmarkedChaptersByMangaId.await(manga.id)
+                    .fastFilterNot { chapter ->
+                        downloadManager.getQueuedDownloadOrNull(chapter.id) != null ||
+                            downloadManager.isChapterDownloaded(
+                                chapter.name,
+                                chapter.scanlator,
+                                chapter.url,
+                                manga.title,
+                                manga.source,
+                            )
+                    }
+                downloadManager.downloadChapters(manga, chapters)
+            }
+        }
+    }
+
+    /** 整本下载：下载该漫画全部「尚未下载」的章节（不论是否已读）。 */
+    private fun downloadAllChapters() {
+        val mangas = selectedManga
+        viewModelScope.launchNonCancellable {
+            mangas.forEach { manga ->
+                val chapters = getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true)
                     .fastFilterNot { chapter ->
                         downloadManager.getQueuedDownloadOrNull(chapter.id) != null ||
                             downloadManager.isChapterDownloaded(

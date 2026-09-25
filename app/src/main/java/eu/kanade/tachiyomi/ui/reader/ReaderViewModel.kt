@@ -61,6 +61,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -293,6 +294,19 @@ class ReaderViewModel(
         if (hasValidArgs) {
             viewModelScope.launch { init() }
         }
+
+        // SY --> 整话超分：用户在阅读途中打开开关时，立即对**当前章节**触发整章超分，
+        // 不必退出重开（loadChapter 的钩子只覆盖「开章时已是开着」的情况）。
+        // drop(1) 跳过首播，只响应真正的开关翻转；去重由 enhance() 的缓存闸门兜底。
+        readerPreferences.realCuganWholeChapter().changes()
+            .drop(1)
+            .onEach { enabled ->
+                if (enabled && readerPreferences.realCuganEnabled().get()) {
+                    getCurrentChapter()?.pageLoader?.enqueueAllPagesForEnhancement()
+                }
+            }
+            .launchIn(viewModelScope)
+        // SY <--
     }
 
     override fun onCleared() {
@@ -356,6 +370,14 @@ class ReaderViewModel(
         chapter: ReaderChapter,
     ): ViewerChapters {
         loader.loadChapter(chapter)
+
+        // SY --> 整话超分：开关打开时，进章即把整章每一页送入后台超分队列
+        // （在线源会逐页联网拉取；结果写入 ImageEnhancementCache 持久化）。
+        // 放在 loadChapter 之后：此时 chapter.pageLoader 已就绪、pages 已填充。
+        if (readerPreferences.realCuganWholeChapter().get()) {
+            chapter.pageLoader?.enqueueAllPagesForEnhancement()
+        }
+        // SY <--
 
         val chapterPos = chapterList.indexOf(chapter)
         val newChapters = ViewerChapters(

@@ -36,6 +36,17 @@ abstract class PageLoader {
     open fun retryPage(page: ReaderPage) {}
 
     /**
+     * SY --> 整话超分（从 mihon_img_upscale 移植）：把本章**尚未就绪**的页全部送入
+     * 加载 + 后台超分队列，使整章每一页都被超分并落盘缓存，而不只是用户滑到的几页。
+     *
+     * 默认空实现：只有需要「整章批量」触发的子类才重写 —— 网络源（HttpPageLoader）、
+     * 已下载源（DownloadPageLoader）、归档源（ArchivePageLoader，服务本地 CBZ 与 WebDAV）。
+     * 调用方（ReaderViewModel）负责判断开关是否打开、是否在阅读器内生效。
+     * SY <--
+     */
+    open fun enqueueAllPagesForEnhancement() {}
+
+    /**
      * Recycles this loader. Implementations must override this method to clean up any active
      * resources.
      */

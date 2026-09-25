@@ -22,10 +22,7 @@ fun enhancementConfigHash(preferences: ReaderPreferences): String = ImageEnhance
     tileSize = preferences.realCuganTileSize().get(),
     precision = preferences.realCuganPrecision().get(),
     fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
-    // SY --> Anime4K GLSL 的预设与两个线条开关也决定输出像素，必须进指纹
-    // （getConfigHash 内部会按模型折叠：非 GLSL 模型这三个值恒为常量）。
-    anime4kPreset = preferences.realCuganAnime4kPreset().get(),
-    anime4kThinLines = preferences.realCuganAnime4kThinLines().get(),
-    anime4kDarkenLines = preferences.realCuganAnime4kDarkenLines().get(),
+    // SY --> 原先这里还有 engine 入参（MM / TX 产出的像素不同，必须分开缓存）。
+    // MihonAc 完美版只剩一套引擎，引擎维度已从指纹里删除，CACHE_SCHEMA 已 +1 作废旧键。
     // SY <--
 )

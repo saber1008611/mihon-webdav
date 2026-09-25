@@ -116,18 +116,27 @@ class ReaderActivity : BaseActivity() {
 
     companion object {
         /**
-         * SY --> 触摸后让超分「让路」的时长，400ms。
+         * SY --> 离散模式（翻页 / 缩放）触摸后让超分「全停让路」的时长，1000ms。
          *
          * 原生侧在 ui_busy 为真时**完全停住**（waifu2x.cpp 里 while(ui_busy) sleep(8ms)，
          * 一块 tile 都不提交），从而把 GPU 让给 UI 渲染线程，消除翻页 / 缩放时的卡顿。
          * dispatchTouchEvent 每收到一个事件都会 setUiBusy(true) 并重置这个定时器。
-         * 400ms 足以盖住手指抬起后的惯性滑动动画（一般 300~500ms）。
          *
-         * 移植自 mihon_img_upscale（TachiyomiX 同款机制）。本分支之前**完全遗漏了这套接线**，
-         * 导致超分一直占满 GPU、阅读器严重卡顿、且 GPU 被推理与渲染互相争抢而两头都慢。
+         * 注意（2026-09-22 修正 / Z4）：连续（条漫）模式**不再**走这套全停 —— 连续滚动时
+         * 全停会让超分整段冻住（滑动时不工作、停下才工作）。连续模式改为「滑动期间持续超分
+         * + 原生 tile 间 sleep 交错让出 GPU」，仅在抬起 / 取消时短暂全停（见
+         * CONTINUOUS_FLING_COOLDOWN_MS）。此 1000ms 仅用于离散模式。
          * SY <--
          */
-        private const val UI_BUSY_COOLDOWN_MS = 400L
+        private const val UI_BUSY_COOLDOWN_MS = 1000L
+
+        /**
+         * SY --> 连续模式「抬起 / 取消」后让超分全停的时长（ms），用于盖住惯性滑动尾巴。
+         * 比 UI_BUSY_COOLDOWN_MS 短得多：只是为了让 fling 期间 GPU 不被超分抢占，
+         * 手指停后很快恢复超分追帧（配合原生 ~800ms 的 recent_interaction 让出窗口）。
+         * SY <--
+         */
+        private const val CONTINUOUS_FLING_COOLDOWN_MS = 350L
 
         /**
          * SY --> 左下角超分状态的刷新间隔，200ms。
@@ -243,12 +252,7 @@ class ReaderActivity : BaseActivity() {
                     tileSize = readerPreferences.realCuganTileSize().get(),
                     precision = Waifu2x.sanitizePrecision(readerPreferences.realCuganPrecision().get()),
                     fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
-                    // SY --> GLSL 路线要靠这三个参数决定 shader 链；漏传会让预热
-                    // 编译出一条与解码器实际使用的链**不同**的链，白白浪费一次编译。
-                    anime4kPreset = readerPreferences.realCuganAnime4kPreset().get(),
-                    anime4kThinLines = readerPreferences.realCuganAnime4kThinLines().get(),
-                    anime4kDarkenLines = readerPreferences.realCuganAnime4kDarkenLines().get(),
-                    // SY <--
+                    // SY --> engineId 实参已删除：MihonAc 完美版只有一套引擎。SY <--
                 )
             }
         }
@@ -441,34 +445,55 @@ class ReaderActivity : BaseActivity() {
      * SY <--
      */
     override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
-        onUiInteracted()
+        onUiInteracted(ev)
         return super.dispatchTouchEvent(ev)
     }
 
     /**
-     * SY --> 标记一次用户交互：超分让路并在冷却后复位（菜单可见时保持让路）。
+     * SY --> 触摸交互 → 让超分给 UI 让路。
      *
-     * **连续滚动模式（条漫 / 竖向连续）不让路。**
+     * 【2026-09-23 方案A 落地（出厂默认）】
+     * 真机实测结论：这台机型（天玑9400 / Immortalis-G925）上「滚动期边滑边超分」
+     * 不可行 —— 楔死帧数只与超分 GPU **提交次数**相关，把让出量放大到 GPU 占空比
+     * 仅 5% 仍残留 11~13% 掉帧、且单页慢 22 倍；同一支二进制段间交替切换后，
+     * 全停把掉帧压到 0.2~0.4%、4950ms 冻结帧从 48/52 降到 4/10。
+     * 因此**连续模式也在滚动期间全停超分**（即 TachiyomiX 的做法）。
+     * 「滑动中看不到超分、停下才继续」是**预期取舍**，不是 bug。
+     * 实测对照见 output\方案D实测-天玑9400-20260923.md。
      *
-     * 让路机制的前提是「一次交互 = 一个短手势」（点一下、翻一页、双指缩放）：400ms
-     * 冷却的相对代价可以忽略。但条漫模式的阅读方式就是**按着屏幕连续滚动几十秒**，
-     * 每一次 MOVE 事件都会把 400ms 冷却窗重新计一遍 —— 等于整段阅读时间里原生推理
-     * 被 100% 停掉。用户看到的就是「一滑动超分就停、手一离开才继续」，而条漫恰恰
-     * 是「一边滚一边读」的模式，超分进度永远追不上。
+     * 分工：
+     *  - **离散（翻页 / 缩放）模式**：触摸即 setUiBusy(true)，冷却 UI_BUSY_COOLDOWN_MS
+     *    后恢复（翻页 / 缩放期间整段暂停，体验更好）。
+     *  - **连续（条漫）模式**：滑动期间只刷新交互时间戳 [Waifu2x.notifyInteraction]，
+     *    由**原生** interaction_full_stop() 在 tile 边界处全停 —— 好处是不会打断
+     *    正在提交的那一块，比 Kotlin 侧反复 setUiBusy 更平滑（不会把正在爬升的
+     *    批量知识清零）；抬起 / 取消时再补一段全停（CONTINUOUS_FLING_COOLDOWN_MS）
+     *    盖住惯性滑动尾巴。停下超过原生的 ~800ms 交互窗口后自动恢复全速追帧。
      *
-     * 所以连续模式下触摸不再给原生设 busy：推理照常按队列推进（每个引擎自身的
-     * 节流已经保证了不抢满 GPU）。菜单打开（[setMenuVisibility]）时的让路仍然保留。
+     * continuous_mode 按当前阅读模式实时同步给原生，保证一致。
      * SY <--
      */
-    private fun onUiInteracted() {
-        if (isContinuousReadingMode()) {
-            uiBusyJob?.cancel()
-            uiBusyJob = null
-            // 菜单打开时仍然让路（那一刻 UI 才是主角，见 setMenuVisibility）；
-            // 菜单没开就一律不让路 —— 滑动期间超分照常按队列推进。
-            Waifu2x.setUiBusy(viewModel.state.value.menuVisible)
+    private fun onUiInteracted(ev: MotionEvent? = null) {
+        val action = ev?.actionMasked
+        val continuous = isContinuousReadingMode()
+        Waifu2x.setContinuousMode(continuous)
+        if (continuous) {
+            when (action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> Waifu2x.notifyInteraction()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    Waifu2x.setUiBusy(true)
+                    uiBusyJob?.cancel()
+                    uiBusyJob = lifecycleScope.launch {
+                        delay(CONTINUOUS_FLING_COOLDOWN_MS)
+                        if (!viewModel.state.value.menuVisible) {
+                            Waifu2x.setUiBusy(false)
+                        }
+                    }
+                }
+            }
             return
         }
+        // 离散模式：触摸即全停让路（翻页 / 缩放期间整段暂停），冷却后恢复。
         Waifu2x.setUiBusy(true)
         uiBusyJob?.cancel()
         uiBusyJob = lifecycleScope.launch {
@@ -481,13 +506,19 @@ class ReaderActivity : BaseActivity() {
 
     /**
      * SY --> 当前阅读器是否为「连续滚动」（条漫 WEBTOON / 竖向连续 CONTINUOUS_VERTICAL）。
-     *
-     * 直接用阅读模式偏好判断，而不是去 as 具体 viewer：`ReadingMode.toViewer` 里
-     * 这两种模式（无论高画质渲染器开没开）都映射到连续型 viewer，语义一一对应。
-     * SY <--
+     * 直接用阅读模式偏好判断：两种模式在 [ReadingMode.toViewer] 里都映射到连续型 viewer，
+     * 语义一一对应。SY <--
      */
     private fun isContinuousReadingMode(): Boolean =
         ReadingMode.fromPreference(viewModel.getMangaReadingMode()).type == ReadingMode.ViewerType.Webtoon
+
+    // SY --> 2026-09-23: 原「A/D 对照开关」（读 Settings.Global.waifu2x_continuous_stop）
+    // 已删除。该 ROM 上 Kotlin 读 Settings.Global 实测不生效（设置后冷却仍是 350ms），
+    // A 段其实是靠原生属性才切成功的，故此处是死代码。
+    // 现在 A（滚动期全停超分）为**出厂默认**；D 仅供对照实验，切换统一走原生属性：
+    //   adb shell setprop debug.waifu2x.ui_stop_ms 1   → A（默认，无需设置）
+    //   adb shell setprop debug.waifu2x.ui_stop_ms 0   → D（对照实验）
+    // SY <--
 
     /**
      * Set menu visibility again on activity resume to apply immersive mode again if needed.
@@ -765,6 +796,11 @@ class ReaderActivity : BaseActivity() {
         binding.readerContainer.addView(loadingIndicator)
 
         startPostponedEnterTransition()
+
+        // SY --> Komiho Phase12: 阅读器模式确定后，把连续（条漫）模式标志同步给原生，
+        // 让「滑动期间 GPU 交错让出」在原生侧正确生效（onUiInteracted 每触摸也会再同步一次）。
+        Waifu2x.setContinuousMode(isContinuousReadingMode())
+        // SY <--
     }
 
     private fun openMangaScreen() {

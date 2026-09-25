@@ -2,15 +2,32 @@ package eu.kanade.tachiyomi.ui.home
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteItem
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldValue
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSuiteScaffoldState
 import androidx.compose.material3.surfaceColorAtElevation
@@ -20,7 +37,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -98,18 +118,11 @@ object HomeScreen : Screen() {
                     }
                 }
 
-                NavigationSuiteScaffold(
-                    navigationSuiteType = navigationSuiteType,
-                    state = navigationSuiteState,
-                    navigationSuiteColors = NavigationSuiteDefaults.colors(
-                        navigationRailContainerColor = MaterialTheme.colorScheme
-                            .surfaceColorAtElevation(3.dp),
-                    ),
-                    navigationItemVerticalArrangement = Arrangement.Center,
-                    navigationItems = {
-                        TABS.fastForEach { NavigationSuiteItem(it, navigationSuiteType) }
-                    },
-                ) {
+                val isNavVisible = navigationSuiteState.currentValue == NavigationSuiteScaffoldValue.Visible
+
+                val scope = rememberCoroutineScope()
+
+                val tabContent: @Composable () -> Unit = {
                     AnimatedContent(
                         targetState = tabNavigator.current,
                         transitionSpec = {
@@ -125,6 +138,100 @@ object HomeScreen : Screen() {
                         }
                     }
                 }
+
+                // SY --> 2026-09-25: move navigation rail to the right side on tablet UI
+                if (navigationSuiteType == NavigationSuiteType.NavigationBar) {
+                    Scaffold(
+                        bottomBar = {
+                            AnimatedVisibility(
+                                visible = isNavVisible,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut(),
+                            ) {
+                                NavigationBar {
+                                    TABS.fastForEach { tab ->
+                                        val selected = tabNavigator.current::class == tab::class
+                                        NavigationBarItem(
+                                            selected = selected,
+                                            onClick = {
+                                                if (!selected) {
+                                                    tabNavigator.current = tab
+                                                } else {
+                                                    scope.launch { tab.onReselect(navigator) }
+                                                }
+                                            },
+                                            icon = { NavIcon(tab) },
+                                            label = { NavLabel(tab) },
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                    ) { paddingValues ->
+                        Box(modifier = Modifier.padding(paddingValues)) {
+                            tabContent()
+                        }
+                    }
+                } else {
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            tabContent()
+                        }
+                        AnimatedVisibility(
+                            visible = isNavVisible,
+                            enter = expandHorizontally() + fadeIn(),
+                            exit = shrinkHorizontally() + fadeOut(),
+                        ) {
+                            // SY --> 2026-09-25: narrow custom rail hugging content
+                            // (no default 80dp width / no windowInsets gap -> removes left/right empty space)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .background(
+                                        MaterialTheme.colorScheme
+                                            .surfaceColorAtElevation(3.dp),
+                                    )
+                                    .padding(vertical = 12.dp),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                TABS.fastForEach { tab ->
+                                    val selected = tabNavigator.current::class == tab::class
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(vertical = 4.dp)
+                                            .clip(MaterialTheme.shapes.small)
+                                            .background(
+                                                if (selected) {
+                                                    MaterialTheme.colorScheme.secondaryContainer
+                                                } else {
+                                                    Color.Transparent
+                                                },
+                                            )
+                                            .clickable(
+                                                onClick = {
+                                                    if (!selected) {
+                                                        tabNavigator.current = tab
+                                                    } else {
+                                                        scope.launch { tab.onReselect(navigator) }
+                                                    }
+                                                },
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            NavIcon(tab)
+                                            NavLabel(tab)
+                                        }
+                                    }
+                                }
+                            }
+                            // SY <-- 2026-09-25
+                        }
+                    }
+                }
+                // SY <-- 2026-09-25
             }
 
             val goToLibraryTab = { tabNavigator.current = LibraryTab }
@@ -166,39 +273,30 @@ object HomeScreen : Screen() {
     }
 
     @Composable
-    private fun NavigationSuiteItem(
-        tab: eu.kanade.presentation.util.Tab,
-        navigationSuiteType: NavigationSuiteType,
-    ) {
-        val tabNavigator = LocalTabNavigator.current
-        val navigator = LocalNavigator.currentOrThrow
-        val scope = rememberCoroutineScope()
-        val selected = tabNavigator.current::class == tab::class
-        NavigationSuiteItem(
-            navigationSuiteType = navigationSuiteType,
-            selected = selected,
-            onClick = {
-                if (!selected) {
-                    tabNavigator.current = tab
-                } else {
-                    scope.launch { tab.onReselect(navigator) }
-                }
-            },
-            icon = {
+    private fun NavIcon(tab: eu.kanade.presentation.util.Tab) {
+        val badge = tabBadge(tab)
+        if (badge != null) {
+            BadgedBox(badge = { badge() }) {
                 Icon(
                     painter = tab.options.icon!!,
                     contentDescription = tab.options.title,
                 )
-            },
-            label = {
-                Text(
-                    text = tab.options.title,
-                    style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            },
-            badge = tabBadge(tab),
+            }
+        } else {
+            Icon(
+                painter = tab.options.icon!!,
+                contentDescription = tab.options.title,
+            )
+        }
+    }
+
+    @Composable
+    private fun NavLabel(tab: eu.kanade.presentation.util.Tab) {
+        Text(
+            text = tab.options.title,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 

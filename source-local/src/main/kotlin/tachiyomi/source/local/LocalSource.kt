@@ -1,6 +1,7 @@
 package tachiyomi.source.local
 
 import android.content.Context
+import android.net.Uri
 import com.hippo.unifile.UniFile
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -63,6 +64,11 @@ class LocalSource(
 
     private val json: Json by injectLazy()
     private val xml: XML by injectLazy()
+
+    init {
+        // 让封面懒加载通道（LocalCoverProvider）能拿到 LocalCoverManager。
+        LocalCoverBridge.coverManager = coverManager
+    }
 
     @Suppress("PrivatePropertyName")
     private val PopularFilters = FilterList(OrderBy.Popular(context))
@@ -135,10 +141,11 @@ class LocalSource(
                         title = mangaDir.name.orEmpty()
                         url = mangaDir.name.orEmpty()
 
-                        // Try to find the cover
-                        coverManager.find(mangaDir.name.orEmpty())?.let {
-                            thumbnail_url = it.uri.toString()
-                        }
+                        // 懒加载封面：只填 content:// 直链，Coil 在网格项滑到可见时才由
+                        // LocalCoverProvider 实时调 LocalCoverManager.find 取封面，避免列表加载时
+                        // 对每个漫画目录列文件找 cover.* 造成的阻塞（44G 库尤其明显）。
+                        thumbnail_url =
+                            "content://${LocalCoverBridge.COVER_AUTHORITY}/${Uri.encode(mangaDir.name.orEmpty())}"
                     }
                 }
             }
@@ -160,9 +167,10 @@ class LocalSource(
 
     // Manga details related
     private suspend fun getMangaDetails(manga: SManga): SManga = withIOContext {
-        coverManager.find(manga.url)?.let {
-            manga.thumbnail_url = it.uri.toString()
-        }
+        // 注意：不要把 thumbnail_url 改写成 file://。列表里填的 content:// 直链（LocalCoverProvider）
+        // 在详情页同样由 MangaCoverFetcher 走 Type.URI 加载，与网格完全一致；若在此改写成 file://
+        // 本地路径，会被详情页的 upsert 写进数据库，返回列表时污染封面（与 WebDAV 源的同类 bug 同构）。
+        // 封面由 LocalCoverProvider 懒加载，这里不额外处理。
 
         // Augment manga details based on metadata files
         try {

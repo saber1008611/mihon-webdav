@@ -22,6 +22,21 @@ object ImageEnhancementCache {
     private const val CACHE_DIR_NAME = "image_enhance_cache"
     private const val LEGACY_CACHE_DIR_NAME = "realcugan_cache"
     private const val MAX_CACHE_SIZE = 3L * 1024 * 1024 * 1024 // 3GB
+
+    // SY --> 2026-09-23 缓存schema版本。
+    // 只要「同一份设置」产出的像素语义发生变化（例如：ARM 不再强制 FP32、
+    // 灰度兜底重新启用、灰度判据重标定），就必须 +1，否则老用户升级后
+    // 命中的旧缓存会一直显示旧观感（画面上的绿点看起来「修了也没用」）。
+    // 代价是升级后首次浏览会整章重算一遍，属于一次性的、可接受的。
+    //
+    // 2026-09-23（v3）：引擎从 MM 换成 TX。两套引擎产出的像素不同，
+    // 且缓存键新增了 `_e{engine}` 段；旧缓存（无该段）自然失配，这里再 +1
+    // 把旧的 MM 版缓存整体作废，避免「切了引擎却看到旧引擎的图」。
+    //
+    // 2026-09-23（v4，MihonAc 完美版）：只剩 Anime4K ACNet 一款模型、一套引擎，
+    // 缓存键去掉了 `_e{engine}` 段，模型编号恒为 6。旧键与新键本来就不会碰撞，
+    // 但仍 +1 明确作废掉双引擎时期留下的缓存（那批图由 sudo / TX 引擎产出，观感不同）。
+    private const val CACHE_SCHEMA = 4
     private var cacheDir: File? = null
     private var lastTrimTime = 0L
     private val cacheGeneration = AtomicInteger(0)
@@ -308,11 +323,7 @@ object ImageEnhancementCache {
      * Generate a unique hash string based on current settings
      *
      * SY --> 移除了 realEsrganStyle 与 processingBackend：前者只服务 Real-ESRGAN，
-     * 后者随 SR 侧 Qualcomm NPU 后端一起删除，现在只有 Vulkan / GLSL 两条路径。
-     *
-     * anime4kPreset / thin / darken 也是**决定输出像素**的输入，必须进指纹：
-     * 换预设或拨动线条开关后如果 hash 不变，就会继续命中上一套链的缓存图，
-     * 表现为「改了设置但画面没变」。6/7 用不到这三个参数，传默认值即可。
+     * 后者随 SR 侧 Qualcomm NPU 后端一起删除，现在只有 Vulkan 一条路径。
      * SY <--
      */
     fun getConfigHash(
@@ -326,9 +337,6 @@ object ImageEnhancementCache {
         tileSize: Int = 128,
         precision: Int = 0,
         fp16Arithmetic: Boolean = false,
-        anime4kPreset: Int = 0,
-        anime4kThinLines: Boolean = false,
-        anime4kDarkenLines: Boolean = false,
     ): String {
         val effectiveScale = getEffectiveScale(model, scale)
         // SY --> 精度也走 sanitize：INT8/BF16 会被引擎收敛成 FP16，
@@ -336,30 +344,21 @@ object ImageEnhancementCache {
         // 实际上完全相同的配置、却各自算一遍的冗余缓存。
         val effectivePrecision = Waifu2x.sanitizePrecision(precision)
         // SY <--
-        // SY --> 只有 GLSL 路线吃这三个参数；其它模型统一折叠成常量，
-        // 免得用户切到 GLSL 调完预设、再切回来时白废一轮缓存。
-        val isGlsl = model == Waifu2x.MODEL_ANIME4K_GLSL
-        val a4kPreset = if (isGlsl) anime4kPreset else 0
-        val a4kThin = if (isGlsl) anime4kThinLines else false
-        val a4kDarken = if (isGlsl) anime4kDarkenLines else false
+        // SY --> 原先这里还有 `_e{engine}` 段（MM / TX 两套引擎产出的像素不一样，
+        // 共用缓存会把 A 引擎的图当成 B 引擎的结果）。MihonAc 完美版只剩一套引擎，
+        // 该段已删除，CACHE_SCHEMA 已 +1 作废旧键。
+        return "v${CACHE_SCHEMA}_${noise}x${effectiveScale}_m${model}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_t${tileSize}_p${effectivePrecision}_fa${if (fp16Arithmetic) 1 else 0}"
         // SY <--
-        return "${noise}x${effectiveScale}_m${model}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_t${tileSize}_p${effectivePrecision}_fa${if (fp16Arithmetic) 1 else 0}_a4k${a4kPreset}${if (a4kThin) "t" else ""}${if (a4kDarken) "d" else ""}"
     }
 
     /**
-     * SY --> mihon-webdav 双引擎版：三款保留模型都只支持 2x
-     * （Anime4K ACNet(6)、waifu2x CUnet(7)、Anime4K GLSL(8)），其余取值一律收敛到 2。
-     * 也被用来兜住旧偏好里残留的、已被移除的模型编号
-     * （Real-ESRGAN / Real-CUGAN / sudo UltraCompact / UpConv7 等 ——
-     * 它们会先被 [Waifu2x.sanitizeModel] 收敛掉，走不到这里）。
+     * SY --> 本构建唯一的模型 Anime4K ACNet(6) 只支持 2x，所以命中时恒返回 2。
+     * 旧偏好里残留的模型编号会先被 [Waifu2x.sanitizeModel] 收敛到 6，走不到 else。
      * SY <--
      */
     fun getEffectiveScale(model: Int, scale: Int): Int {
         return when (model) {
-            Waifu2x.MODEL_WAIFU2X_CUNET,
-            Waifu2x.MODEL_ANIME4K_ACNET,
-            Waifu2x.MODEL_ANIME4K_GLSL,
-            -> 2
+            Waifu2x.MODEL_ANIME4K_ACNET -> 2
 
             else -> scale
         }

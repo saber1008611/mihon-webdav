@@ -21,6 +21,7 @@ import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.repository.StubSourceRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.LocalSource
+import eu.kanade.tachiyomi.source.webdav.WebDavSource
 import java.util.concurrent.ConcurrentHashMap
 
 @Inject
@@ -30,6 +31,7 @@ class AndroidSourceManager(
     private val extensionManager: ExtensionManager,
     private val sourceRepository: StubSourceRepository,
     private val localSource: LocalSource,
+    private val webDavSource: WebDavSource,
     private val downloadManager: Lazy<DownloadManager>,
 ) : SourceManager {
 
@@ -51,7 +53,12 @@ class AndroidSourceManager(
             extensionManager.loadedExtensionsFlow
                 .collectLatest { extensions ->
                     val mutableMap = ConcurrentHashMap<Long, Source>(
-                        mapOf(LocalSource.ID to localSource),
+                        mapOf(
+                            LocalSource.ID to localSource,
+                            // SY --> 路线 A 方案 1：把 WebDAV 云盘源注册进源列表，使其可浏览/阅读。
+                            WebDavSource.ID to webDavSource,
+                            // SY <--
+                        ),
                     )
                     extensions.forEach { extension ->
                         extension.sources.forEach {

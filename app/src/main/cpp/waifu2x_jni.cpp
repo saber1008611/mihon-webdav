@@ -1,4 +1,5 @@
 #include "anime4k.h"
+#include "periodic_texture_guard.h"
 #include "waifu2x.h"
 #include <android/bitmap.h>
 #include <android/log.h>
@@ -10,6 +11,9 @@
 #include <jni.h>
 #include <mutex>
 #include <vector>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 #define TAG "Waifu2xJNI"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
@@ -22,6 +26,136 @@ static std::atomic<int> g_progress{0};
 static std::atomic<int> g_current_id{-1};
 static std::atomic<int> g_ui_busy{0};
 static std::atomic<bool> g_abort_processing{false};
+
+// SY --> 2026-09-25: 从上游 v1.3.10 移植的偏色 / 色块防护辅助函数。
+// 背景：漫画黑白扫描页常有轻微底色（泛黄 / 霉斑），超分模型会把底色放大成
+// 「偏色」；网点密集的页面还会被模型处理成「色块」。下面这组函数只作用于
+// 被判定为「单色」的源（彩色页完全不付代价），且输出端的 force 只在单色源上跑。
+namespace {
+
+// 采样网格：把源图按 kMonochromeSampleAxis×kMonochromeSampleAxis 均匀采样，
+// 统计「彩色样本」占比。某像素三通道极差 > 阈值即算彩色。
+constexpr int kMonochromeChromaThreshold = 24;
+constexpr int kMonochromeSampleAxis = 64;
+constexpr int kMaximumColoredSamplePercent = 1;
+
+// 检测大面积、近乎一维的网点纹理（周期纹理）。借用 periodic_texture_guard 的
+// occupies_too_much，按 tile 粒度扫描。仅当某 tile 被判定为「风险」才返回 true。
+bool page_has_excessive_periodic_texture(const unsigned char *rgba, int width,
+                                         int height, int tile_size) {
+  if (!rgba || width <= 0 || height <= 0 || tile_size <= 0) return false;
+  for (int tile_y = 0; tile_y < height; tile_y += tile_size) {
+    for (int tile_x = 0; tile_x < width; tile_x += tile_size) {
+      const int tile_width = std::min(tile_size, width - tile_x);
+      const int tile_height = std::min(tile_size, height - tile_y);
+      const bool risky = periodic_texture_guard::occupies_too_much(
+          tile_width, tile_height, [&](int x, int y) {
+            return rgba[(static_cast<size_t>(tile_y + y) * width +
+                         tile_x + x) * 4];
+          });
+      if (risky) return true;
+    }
+  }
+  return false;
+}
+
+// 输入归一化：把「单色但带轻微底色」的扫描页在推理前转成纯净 BT.601 灰度亮度，
+// 避免模型放大源底色。返回是否判定为单色（供输出端 force_monochrome 使用）。
+bool normalize_monochrome_input(unsigned char *rgba, int width, int height) {
+  if (!rgba || width <= 0 || height <= 0) return false;
+
+  const int step_x = std::max(1, width / kMonochromeSampleAxis);
+  const int step_y = std::max(1, height / kMonochromeSampleAxis);
+  int samples = 0;
+  int colored_samples = 0;
+  for (int y = step_y / 2; y < height; y += step_y) {
+    for (int x = step_x / 2; x < width; x += step_x) {
+      const unsigned char *pixel = rgba + (static_cast<size_t>(y) * width + x) * 4;
+      const int min_channel = std::min({static_cast<int>(pixel[0]),
+                                        static_cast<int>(pixel[1]),
+                                        static_cast<int>(pixel[2])});
+      const int max_channel = std::max({static_cast<int>(pixel[0]),
+                                        static_cast<int>(pixel[1]),
+                                        static_cast<int>(pixel[2])});
+      ++samples;
+      if (max_channel - min_channel > kMonochromeChromaThreshold) {
+        ++colored_samples;
+      }
+    }
+  }
+  if (samples == 0 || colored_samples * 100 > samples * kMaximumColoredSamplePercent) {
+    return false;
+  }
+
+  const size_t pixel_count = static_cast<size_t>(width) * height;
+  for (size_t i = 0; i < pixel_count; ++i) {
+    unsigned char *pixel = rgba + i * 4;
+    // BT.601 整数亮度；alpha 原样保留
+    const unsigned char luma = static_cast<unsigned char>(
+        (77 * pixel[0] + 150 * pixel[1] + 29 * pixel[2] + 128) >> 8);
+    pixel[0] = luma;
+    pixel[1] = luma;
+    pixel[2] = luma;
+  }
+  LOGD("Normalized monochrome input before inference (%d/%d colored samples)",
+       colored_samples, samples);
+  return true;
+}
+
+// 输出强制单色：把推理后的 RGBA 转成 BT.601 灰度。只在被判定为单色的源上运行，
+// 与输入归一化互补——即使模型「造色」也能在输出端抹掉。彩色页永不付全图代价。
+void force_monochrome_output(unsigned char *rgba, int width, int height,
+                             int stride) {
+  if (!rgba || width <= 0 || height <= 0 || stride < width * 4) return;
+
+  for (int y = 0; y < height; ++y) {
+    unsigned char *row = rgba + static_cast<size_t>(y) * stride;
+    int x = 0;
+#if defined(__ARM_NEON)
+    for (; x + 8 <= width; x += 8) {
+      uint8x8x4_t pixels = vld4_u8(row + static_cast<size_t>(x) * 4);
+      uint16x8_t luma = vmull_u8(pixels.val[0], vdup_n_u8(77));
+      luma = vmlal_u8(luma, pixels.val[1], vdup_n_u8(150));
+      luma = vmlal_u8(luma, pixels.val[2], vdup_n_u8(29));
+      luma = vaddq_u16(luma, vdupq_n_u16(128));
+      const uint8x8_t gray = vshrn_n_u16(luma, 8);
+      pixels.val[0] = gray;
+      pixels.val[1] = gray;
+      pixels.val[2] = gray;
+      vst4_u8(row + static_cast<size_t>(x) * 4, pixels);
+    }
+#endif
+    for (; x < width; ++x) {
+      unsigned char *pixel = row + static_cast<size_t>(x) * 4;
+      const unsigned char luma = static_cast<unsigned char>(
+          (77 * pixel[0] + 150 * pixel[1] + 29 * pixel[2] + 128) >> 8);
+      pixel[0] = luma;
+      pixel[1] = luma;
+      pixel[2] = luma;
+    }
+  }
+}
+
+}  // namespace
+// SY <--
+
+// SY --> 2026-09-25: LLVM OpenMP CPU 亲和性崩溃修复（上游 v1.3.10）。
+// 预编译的 ncnn 静态链了 LLVM OpenMP。部分厂商内核上，其亲和性探测会在首次
+// CPU resize 时触发内部断言，以 SIGABRT 直接杀死整个进程（表现为全局搜索 /
+// 打开插件等首次重 native 操作时崩溃）。必须在任何 NCNN 操作之前禁用该亲和性策略。
+// 注：GPU / QNN 执行路径不走这套 host-thread 亲和性策略，故不影响超分主路径。
+// kmp_set_defaults 是 LLVM OpenMP 运行时导出的符号，需在文件作用域声明（C++ 不允许
+// 把 extern "C" 链接说明嵌套进函数体），故声明放在 JNI_OnLoad 之前。
+extern "C" void kmp_set_defaults(char const *defaults);
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *, void *) {
+  setenv("KMP_AFFINITY", "disabled", 1);
+  setenv("OMP_PROC_BIND", "false", 1);
+  unsetenv("OMP_PLACES");
+  kmp_set_defaults("KMP_AFFINITY=disabled");
+  LOGD("LLVM OpenMP CPU affinity disabled (Tier4 crash guard)");
+  return JNI_VERSION_1_6;
+}
+// SY <--
 
 // SY --> Komiho Phase11: sudo UltraCompact（来自 TachiyomiX 官方 modelpack）。
 //
@@ -55,8 +189,18 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitSudoUltra(
 
   g_waifu2x = new Waifu2x(0, false, 0, precision,
                           fp16_arithmetic == JNI_TRUE); // GPU 0
-  // 与另两款模型保持一致：不做灰度检测、不强制灰度输出（保持既有输出语义）
+  // SY --> 2026-09-23 定稿：灰度判定**保持关闭**（= 出厂原行为，与上游一致）。
+  //
+  // 当天为压 FP16 融合路径的色度噪声（浅色纸面上的「绿点」）曾把它打开，
+  // 但真机反馈是「绿色虽然消失了，但是图片色度也不对啊成灰白样式」——
+  // 强制灰阶会把带暖色调的黑白扫描页 neutralize 成冷灰，属于**可见的画质改变**。
+  // 既然 FP16 通路已整体作废（见 waifu2x.cpp 的 arm_precision 定稿注释），
+  // 就没必要再为此改变像素观感，故回到「不强制灰阶」。
+  // 诊断用：debug.waifu2x.grayscale=1 可临时打开（-1 自动 / 0 强制彩色 / 1 强制灰阶）。
   g_waifu2x->disable_grayscale_check = true;
+  // SY --> 2026-09-25: 开启网点色块防护（上游 v1.3.10）。仅对单色 + 网点密集的
+  // 页触发，彩色页 / 普通线条稿不付代价；触发时跳过 GPU 改走受防护的 staged 路径。
+  g_waifu2x->enable_periodic_texture_guard = false;  // SY --> 2026-09-25 用户选择关闭色块防护以恢复滑动流畅度（网点页回到快速融合路径）
   g_waifu2x->noise = 0;
   g_waifu2x->scale = 2; // PixelShuffle(2) + nearest 2x 跳连，结构固定 2x
   g_waifu2x->progress_ptr = &g_progress;
@@ -108,7 +252,18 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitAnime4kAcnet(
   g_waifu2x = new Waifu2x(0, false, 0, precision,
                           fp16_arithmetic == JNI_TRUE); // GPU 0
   g_waifu2x->luma_model = true;
+  // SY --> 2026-09-23 定稿：灰度判定**保持关闭**（= 出厂原行为，与上游一致）。
+  //
+  // 当天为压 FP16 融合路径的色度噪声（浅色纸面上的「绿点」）曾把它打开，
+  // 但真机反馈是「绿色虽然消失了，但是图片色度也不对啊成灰白样式」——
+  // 强制灰阶会把带暖色调的黑白扫描页 neutralize 成冷灰，属于**可见的画质改变**。
+  // 既然 FP16 通路已整体作废（见 waifu2x.cpp 的 arm_precision 定稿注释），
+  // 就没必要再为此改变像素观感，故回到「不强制灰阶」。
+  // 诊断用：debug.waifu2x.grayscale=1 可临时打开（-1 自动 / 0 强制彩色 / 1 强制灰阶）。
   g_waifu2x->disable_grayscale_check = true;
+  // SY --> 2026-09-25: 开启网点色块防护（上游 v1.3.10）。仅对单色 + 网点密集的
+  // 页触发，彩色页 / 普通线条稿不付代价；触发时跳过 GPU 改走受防护的 staged 路径。
+  g_waifu2x->enable_periodic_texture_guard = false;  // SY --> 2026-09-25 用户选择关闭色块防护以恢复滑动流畅度（网点页回到快速融合路径）
   g_waifu2x->noise = 0;
   g_waifu2x->scale = 2; // 模型结构固定 2x（ConvTranspose stride 2）
   g_waifu2x->progress_ptr = &g_progress;
@@ -125,18 +280,14 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitAnime4kAcnet(
 }
 // SY <--
 
-// SY --> 原 nativeInitWaifu2xUpconv7。
+// SY --> Waifu2x (Fast) / UpConv7（TachiyomiX 官方 modelpack）。
 //
-// 改名成 Cunet 是因为 2026-09-22 起本工程内置的 waifu2x 权重由 UpConv7 换成 CUnet
-// （可达阅读器的 waifu2x 支经考证最吻合 CUnet：强降噪、网点涂抹）。
-//
-// 两者来自同一个上游 nihui/waifu2x-ncnn-vulkan，**文件命名完全一致**
-// （noise{0..3}_scale2.0x_model.param/.bin），所以这段路径拼接逻辑一字未改即可复用；
-// 感受野差异由 Waifu2x::load() 的 derive_prepadding_from_param() 自动推导，
-// 不需要为 CUnet 的更大 receptive field 做特调。
+// 来自上游 nihui/waifu2x-ncnn-vulkan：权重命名约定 noise{0..3}_scale2.0x_model.param/.bin，
+// 路径拼接逻辑通用；感受野由 Waifu2x::load() 的 derive_prepadding_from_param()
+// 按 param 自动推导，不需要换架构时特调。
 // SY <--
 extern "C" JNIEXPORT jboolean JNICALL
-Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xCunet(
+Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xUpconv7(
     JNIEnv *env, jobject thiz, jstring model_dir, jint noise_level,
     jint scale_level, jint precision, jboolean fp16_arithmetic) {
   g_abort_processing = true;
@@ -170,7 +321,18 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xCunet(
 
   g_waifu2x = new Waifu2x(0, false, 0, precision,
                           fp16_arithmetic == JNI_TRUE); // GPU 0
+  // SY --> 2026-09-23 定稿：灰度判定**保持关闭**（= 出厂原行为，与上游一致）。
+  //
+  // 当天为压 FP16 融合路径的色度噪声（浅色纸面上的「绿点」）曾把它打开，
+  // 但真机反馈是「绿色虽然消失了，但是图片色度也不对啊成灰白样式」——
+  // 强制灰阶会把带暖色调的黑白扫描页 neutralize 成冷灰，属于**可见的画质改变**。
+  // 既然 FP16 通路已整体作废（见 waifu2x.cpp 的 arm_precision 定稿注释），
+  // 就没必要再为此改变像素观感，故回到「不强制灰阶」。
+  // 诊断用：debug.waifu2x.grayscale=1 可临时打开（-1 自动 / 0 强制彩色 / 1 强制灰阶）。
   g_waifu2x->disable_grayscale_check = true;
+  // SY --> 2026-09-25: 开启网点色块防护（上游 v1.3.10）。仅对单色 + 网点密集的
+  // 页触发，彩色页 / 普通线条稿不付代价；触发时跳过 GPU 改走受防护的 staged 路径。
+  g_waifu2x->enable_periodic_texture_guard = false;  // SY --> 2026-09-25 用户选择关闭色块防护以恢复滑动流畅度（网点页回到快速融合路径）
   g_waifu2x->noise = noise_level;
   g_waifu2x->scale = scale_level;
   // SY --> Komiho Phase11: prepadding 交给 Waifu2x::load() 按 param 推导
@@ -211,7 +373,18 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealcugan(
 
   g_waifu2x = new Waifu2x(0, false, 0, precision,
                           fp16_arithmetic == JNI_TRUE); // GPU 0
+  // SY --> 2026-09-23 定稿：灰度判定**保持关闭**（= 出厂原行为，与上游一致）。
+  //
+  // 当天为压 FP16 融合路径的色度噪声（浅色纸面上的「绿点」）曾把它打开，
+  // 但真机反馈是「绿色虽然消失了，但是图片色度也不对啊成灰白样式」——
+  // 强制灰阶会把带暖色调的黑白扫描页 neutralize 成冷灰，属于**可见的画质改变**。
+  // 既然 FP16 通路已整体作废（见 waifu2x.cpp 的 arm_precision 定稿注释），
+  // 就没必要再为此改变像素观感，故回到「不强制灰阶」。
+  // 诊断用：debug.waifu2x.grayscale=1 可临时打开（-1 自动 / 0 强制彩色 / 1 强制灰阶）。
   g_waifu2x->disable_grayscale_check = true;
+  // SY --> 2026-09-25: 开启网点色块防护（上游 v1.3.10）。仅对单色 + 网点密集的
+  // 页触发，彩色页 / 普通线条稿不付代价；触发时跳过 GPU 改走受防护的 staged 路径。
+  g_waifu2x->enable_periodic_texture_guard = false;  // SY --> 2026-09-25 用户选择关闭色块防护以恢复滑动流畅度（网点页回到快速融合路径）
   g_waifu2x->noise = 0;
   g_waifu2x->scale = 2;       // 模型结构固定 2x
   g_waifu2x->progress_ptr = &g_progress;
@@ -283,6 +456,21 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
     AndroidBitmap_unlockPixels(env, bitmap);
 
     if (g_waifu2x) {
+      // SY --> 2026-09-25: 偏色 / 色块防护前置（上游 v1.3.10）。
+      // 先判定源是否为「单色」，是则把输入归一化为纯净灰度（抹掉轻微底色），
+      // 并检测是否含大面积周期网点纹理（决定本页是否跳过 GPU、改走受防护的
+      // staged 路径）。归一化必须发生在任何推理路径使用前。
+      const bool is_monochrome_input = normalize_monochrome_input(
+          static_cast<unsigned char *>(packed_input.data), w, h);
+      const bool guard_periodic_texture =
+          is_monochrome_input && g_waifu2x->enable_periodic_texture_guard &&
+          page_has_excessive_periodic_texture(
+              static_cast<const unsigned char *>(packed_input.data), w, h,
+              g_waifu2x->tilesize);
+      if (guard_periodic_texture) {
+        LOGD("Periodic texture guard active: skipping fused GPU path for this page");
+      }
+
       int out_w = w * g_waifu2x->scale;
       int out_h = h * g_waifu2x->scale;
 
@@ -328,6 +516,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
           // Real-CUGAN / Real-ESRGAN / W2xEX / SPAN 一并移除，现在只走 Vulkan，
           // ret 保持初始值即可进入下面的 GPU 融合路径。
           if (ret != 0 && !g_abort_processing.load() &&
+              !guard_periodic_texture &&
               g_waifu2x->has_gpu_pipeline()) {
             const auto fused_start = std::chrono::steady_clock::now();
             ret = g_waifu2x->process_gpu(packed_input, outPixels,
@@ -355,6 +544,13 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
             LOGD("Staged processing %s in %lld ms",
                  ret == 0 ? "completed" : "failed",
                  static_cast<long long>(staged_ms));
+          }
+
+          if (ret == 0 && is_monochrome_input) {
+            force_monochrome_output(static_cast<unsigned char *>(outPixels),
+                                    outInfo.width, outInfo.height,
+                                    outInfo.stride);
+            LOGD("Forced monochrome output after inference");
           }
 
           g_waifu2x->progress_ptr = nullptr;
@@ -464,6 +660,16 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeDestroy(JNIEnv *env,
 extern "C" JNIEXPORT void JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeAbortProcessing(
     JNIEnv *env, jobject thiz) {
+  // SY --> 诊断（2026-09-23）：这一行出现 = Kotlin 侧**决定**打断当前超分页
+  // （ImageEnhancer.preemptActiveRequest / cancelAll 都走这里）。
+  // 配合 waifu2x.cpp 的 "Abort: page discarded after N/M tiles" 可以判别：
+  //   · 只有本行、没有 discarded 行 → 打断请求发出时页已算完（无损失）
+  //   · 两行都有                    → 整页作废、重排后从第 0 块重算（白扔）
+  // 验证「进度感知抢占」的关键指标就是本行的出现次数：
+  //   修复后，翻页时若当前页进度已 >= PREEMPT_MIN_PROGRESS_PCT，Kotlin 会
+  //   **直接 return 不调用本函数** → 本行不出现。
+  LOGD("abort requested by UI side (preempt or cancelAll)");
+  // SY <--
   g_abort_processing.store(true);
 }
 
@@ -581,6 +787,29 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeSetUiBusy(JNIEnv *env,
                                                               jboolean busy) {
   g_ui_busy.store(busy ? 1 : 0);
 }
+
+// SY --> Komiho Phase12: 连续滚动模式 GPU 交错让出所需的两条原生接口。
+// nativeSetContinuousMode：Kotlin 按阅读模式设置（条漫=true）。
+// nativeNotifyInteraction：连续模式下每次滑动（DOWN/MOVE）调用，刷新最近交互时间戳，
+//   用于区分「正在滑动」与「停下阅读」——仅近期有交互时才强制让出 GPU 下限。
+extern "C" JNIEXPORT void JNICALL
+Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeSetContinuousMode(
+    JNIEnv *env, jobject thiz, jboolean continuous) {
+  if (g_waifu2x) {
+    g_waifu2x->continuous_mode = (continuous ? true : false);
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeNotifyInteraction(
+    JNIEnv *env, jobject thiz) {
+  if (g_waifu2x) {
+    g_waifu2x->last_interaction_ms.store(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+  }
+}
+// SY <--
 
 extern "C" JNIEXPORT void JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeUpdatePerformanceConfig(

@@ -248,12 +248,6 @@ class ImageDecoder(private val resources: ImageSource, private val options: Opti
             val tileSize = preferences.realCuganTileSize().get().coerceAtLeast(32)
             val precision = Waifu2x.sanitizePrecision(preferences.realCuganPrecision().get())
             val fp16Arithmetic = preferences.realCuganFp16Arithmetic().get()
-            // SY --> Anime4K GLSL 的三个专属参数；非 GLSL 模型传给 ensureLoaded 也会被忽略。
-            val anime4kPreset = preferences.realCuganAnime4kPreset().get()
-            val anime4kThin = preferences.realCuganAnime4kThinLines().get()
-            val anime4kDarken = preferences.realCuganAnime4kDarkenLines().get()
-            // SY <--
-
             val effectiveScale = ImageEnhancementCache.getEffectiveScale(model, scale)
             if (effectiveScale != scale) {
                 logcat(LogPriority.DEBUG) {
@@ -261,13 +255,11 @@ class ImageDecoder(private val resources: ImageSource, private val options: Opti
                 }
             }
 
-            // SY --> 先把引擎初始化（原来放在预缩放之后）。
-            // 原因：GLSL 路线的纹理上限 `GL_MAX_TEXTURE_SIZE` 只有 init 之后才查得到，
-            // 而下面的输入分辨率裁剪必须把这个上限算进去，才能让 GLSL 吃下长条图
-            // ——否则只能整页跳过增强。
+            // SY --> 先把引擎初始化（原来放在预缩放之后，这里保持现在的顺序即可：
+            // init 只负责加载权重，与输入缩放无关，两张顺序都不会改变结果）。
             // 模型分派统一收敛到 Waifu2x.ensureLoaded：
-            //   7=waifu2x CUnet（3 通道，模型包提供）、6=Anime4K ACNet（单通道 luma，内置）、
-            //   8=Anime4K GLSL（模型包提供，独立执行器，不吃 tile/precision）。
+            //   4=sudo UltraCompact（3 通道，内置）、5=Waifu2x Fast/UpConv7（3 通道，内置）、
+            //   6=Anime4K ACNet（单通道 luma，内置）。
             val initialized = Waifu2x.ensureLoaded(
                 context = context,
                 model = model,
@@ -277,40 +269,20 @@ class ImageDecoder(private val resources: ImageSource, private val options: Opti
                 tileSize = tileSize,
                 precision = precision,
                 fp16Arithmetic = fp16Arithmetic,
-                anime4kPreset = anime4kPreset,
-                anime4kThinLines = anime4kThin,
-                anime4kDarkenLines = anime4kDarken,
+                // SY --> engineId 实参已删除：MihonAc 完美版只有一套引擎（自研融合调度）。
+                // SY <--
             )
             if (!initialized) {
-                // 没装模型包 / GLSL 编译失败 / 解包失败：跳过增强显示原图。
+                // 权重缺失 / 解包失败：跳过增强显示原图。
                 logcat(LogPriority.DEBUG) {
                     "ImageDecoder: Model $model not available, skipping enhancement for page $pageIndex"
                 }
                 return bitmap
             }
 
-            val isGlsl = Waifu2x.isGlslEngineActive()
-            // GLSL 的输出 = 输入 × effectiveScale，必须 <= 纹理上限 ⇒ 输入上限 = 上限 / 倍率。
-            val glslInputCap = if (isGlsl) {
-                val limit = Waifu2x.anime4kTextureLimit()
-                if (limit > 0) limit / effectiveScale else 0
-            } else {
-                0
-            }
-            // SY <--
-
             // --- 输入分辨率上限：超限先缩小，避免推理时间爆炸 ---
-            // SY --> GLSL 的纹理上限也折进来一起取 min。
-            val capWidth = if (glslInputCap > 0) {
-                if (processMaxWidth > 0) min(processMaxWidth, glslInputCap) else glslInputCap
-            } else {
-                processMaxWidth
-            }
-            val capHeight = if (glslInputCap > 0) {
-                if (processMaxHeight > 0) min(processMaxHeight, glslInputCap) else glslInputCap
-            } else {
-                processMaxHeight
-            }
+            val capWidth = processMaxWidth
+            val capHeight = processMaxHeight
             val hasProcessMaxResolution = capWidth > 0 || capHeight > 0
             val widthRatio = if (capWidth > 0) {
                 capWidth / bitmap.width.toFloat()
@@ -331,8 +303,7 @@ class ImageDecoder(private val resources: ImageSource, private val options: Opti
                 logcat(LogPriority.DEBUG) {
                     "ImageDecoder: Prescaling page $pageIndex input with native scaling " +
                         "${bitmap.width}x${bitmap.height} -> ${newWidth}x${newHeight}, " +
-                        "processingMax=${capWidth}x${capHeight}, outputScale=${effectiveScale}x" +
-                        if (isGlsl) ", glslTextureLimit=${Waifu2x.anime4kTextureLimit()}" else ""
+                        "processingMax=${capWidth}x${capHeight}, outputScale=${effectiveScale}x"
                 }
                 val scaledBitmap = nativeScaleBitmap(bitmap, newWidth, newHeight)
                 if (scaledBitmap != bitmap) {
@@ -344,13 +315,7 @@ class ImageDecoder(private val resources: ImageSource, private val options: Opti
 
             currentCoroutineContext().ensureActive()
 
-            // SY --> 按当前生效的引擎选推理入口：GLSL 走整图 FBO，ncnn 走分块。
-            val processed = (if (isGlsl) {
-                Waifu2x.processAnime4K(bitmap)
-            } else {
-                Waifu2x.processWaifu2x(bitmap, pageIndex)
-            }) ?: return bitmap
-            // SY <--
+            val processed = Waifu2x.processWaifu2x(bitmap, pageIndex) ?: return bitmap
 
             var result: Bitmap = processed
             var ownsResult = true

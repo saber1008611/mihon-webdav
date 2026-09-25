@@ -2,6 +2,8 @@
 .gradle
 .kotlin
 build
+app/.cxx/
+.cxx/
 
 # IDE files
 *.iml
@@ -9,9 +11,22 @@ build
 !.idea/icon.svg
 /captures
 
-# Configuration files
+# Configuration files (may contain local machine paths / secrets)
 keystore.properties
 local.properties
+local.properties.bak
+*.bak
 
-# macOS specific files
+# Local backup / scratch directories
+_backup_*/
+backup/
+tmp/
+
+# Logs
+*.log
+
+# Android / OS noise
+*.apk
+*.aab
 .DS_Store
+Thumbs.db

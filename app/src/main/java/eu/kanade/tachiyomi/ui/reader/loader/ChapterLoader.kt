@@ -17,6 +17,7 @@ import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import tachiyomi.source.local.LocalSource
 import tachiyomi.source.local.io.Format
+import eu.kanade.tachiyomi.source.webdav.WebDavSource
 
 /**
  * Loader used to retrieve the [PageLoader] for a given chapter.
@@ -77,7 +78,7 @@ class ChapterLoader(
     /**
      * Returns the page loader to use for this [chapter].
      */
-    private fun getPageLoader(chapter: ReaderChapter): PageLoader {
+    private suspend fun getPageLoader(chapter: ReaderChapter): PageLoader {
         val dbChapter = chapter.chapter
         val isDownloaded = downloadManager.isChapterDownloadedOnDisk(
             dbChapter.name,
@@ -101,6 +102,11 @@ class ChapterLoader(
                     is Format.Epub -> EpubPageLoader(format.file.epubReader(context))
                 }
             }
+            // SY --> 路线 A 方案 1：先把 CBZ 流式下载到缓存，再用现成归档阅读器读页。
+            source is WebDavSource -> source.getArchiveFile(chapter.chapter).let { file ->
+                ArchivePageLoader(file.archiveReader(context))
+            }
+            // SY <--
             source is HttpSource -> HttpPageLoader(chapter, source, chapterCache)
             source is StubSource -> error(context.stringResource(MR.strings.source_not_installed, source.toString()))
             else -> error(context.stringResource(MR.strings.loader_not_implemented_error))

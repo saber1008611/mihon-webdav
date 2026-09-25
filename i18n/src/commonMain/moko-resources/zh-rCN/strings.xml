@@ -205,6 +205,7 @@
     <string name="sort_by_number">按章节编号</string>
     <string name="manga_download">下载</string>
     <string name="download_unread">未读</string>
+    <string name="download_all">整本下载</string>
     <string name="confirm_delete_chapters">确定要删除所选章节吗？</string>
     <string name="manga_tracking_tab">进度记录</string>
     <string name="reading">在读</string>
@@ -934,17 +935,11 @@
     <string name="reader_show_processing_status">在左下角显示处理状态</string>
     <!-- SY start: 超分设置项（此前只写了 base，中文环境回退成英文） -->
     <string name="reader_image_enhancement">画面增强</string>
-    <string name="reader_model">模型</string>
+    <string name="reader_image_enhancement_whole_chapter">整话超分</string>
+    <string name="reader_image_enhancement_whole_chapter_summary">对本章每一页都做超分并写入缓存，而不只是你滑到的那些页。在线源会逐页联网拉取。</string>
+    <!-- SY 超分引擎后端（TachiyomiX 超分移植）。两套原生库同时全局导出同名 C++ 符号，一个进程只装一个，切换后必须重启应用。 -->
     <!-- SY 旧模型名，代码已不再引用，保留以免与其它语言文件不一致（此处不写箭头，避免注释内出现连续两个连字符） -->
-    <string name="reader_model_sudo_ultracompact">AnimeJaNai 超紧凑 2 倍</string>
-    <string name="reader_model_waifu2x_fast">Waifu2x（快速）</string>
-    <string name="reader_model_waifu2x_cunet">Waifu2x CUnet 2 倍</string>
-    <string name="reader_model_anime4k_acnet">Anime4K ACNet</string>
-    <string name="reader_model_anime4k_glsl">Anime4K（GLSL）</string>
-    <string name="reader_model_anime4k_acnet_note">内置引擎，三款里最轻：单通道亮度网络，全程走 GPU 融合管线，画质最锐利。</string>
-    <string name="reader_model_cunet_note">级联 U-Net，带 0–3 档降噪：降噪最激进，适合噪点多、压缩重的图源。需安装对应模型包。</string>
-    <string name="reader_model_glsl_note">Anime4K v4 着色器链，6 个官方预设 + 「细化线条 / 线条加黑」两个开关。整图处理，超长条图会先缩到 GPU 纹理上限内。需安装对应模型包。</string>
-    <string name="reader_model_pack_hint">该引擎需要先安装对应模型包。装好后重新打开本菜单即可选用。</string>
+    <string name="reader_model_anime4k_acnet_note">本版唯一的超分模型：单通道亮度网络，全程走 GPU 融合管线，画质锐利。</string>
     <string name="reader_anime4k_preset">Anime4K 预设</string>
     <string name="reader_anime4k_preset_0">A+A 快速</string>
     <string name="reader_anime4k_preset_1">A+A 高质量</string>

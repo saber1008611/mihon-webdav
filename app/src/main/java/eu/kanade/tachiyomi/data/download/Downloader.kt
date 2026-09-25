@@ -8,6 +8,7 @@ import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.model.getComicInfo
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.library.LibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
@@ -88,6 +89,7 @@ class Downloader(
     private val notifier: DownloadNotifier,
     // SY --> 从 mihon_img_upscale 移植：WebDAV 云同步
     private val cloudSyncService: CloudSyncService,
+    private val coverCache: CoverCache,
     // SY <--
 ) {
     /**
@@ -772,6 +774,9 @@ class Downloader(
     private var cloudUploadJob: Job? = null
     private var cloudUploadParallelism = 0
 
+    /** 本会话内已推送过封面的 mangaId，避免同一本漫画的每章都重复传封面。 */
+    private val uploadedCoverMangaIds = Collections.synchronizedSet(mutableSetOf<Long>())
+
     private val _cloudUploadProgress = MutableStateFlow<Map<Long, Int>>(emptyMap())
 
     /** chapterId -> 上传百分比（0..100）。下载页用它显示「Uploading n%」。 */
@@ -817,9 +822,10 @@ class Downloader(
 
     /** 远端目录与本地下载目录保持同构：destination/{来源目录}/{漫画目录}。 */
     private fun cloudRemoteDirectory(download: Download, target: CloudSyncTarget): String {
+        // SY --> 扁平化：直接 destination/{漫画名}/{章节}.cbz，去掉「站点名」那一层，
+        // 与 WebDavSource 的单层浏览（destination 的子目录即漫画）保持一致。
         return combineRemotePath(
             target.destination,
-            provider.getSourceDirName(download.source),
             provider.getMangaDirName(download.manga.title),
         )
     }
@@ -834,6 +840,7 @@ class Downloader(
                 chapterId = download.chapter.id,
                 mangaId = download.manga.id,
                 mangaTitle = download.manga.title,
+                mangaThumbnailUrl = download.manga.thumbnailUrl,
                 file = archive,
                 config = target.config,
                 remoteDirectory = cloudRemoteDirectory(download, target),
@@ -934,6 +941,39 @@ class Downloader(
             notifier.onWarning(e.message ?: "Cloud sync upload failed", mangaId = task.mangaId)
             removeCloudUploadTask(task.key)
         }
+
+        // 章节上传成功后，顺手把漫画封面推到同一个远端文件夹（与章节 CBZ 并列）。
+        // 独立的容错：封面缺失/失败都绝不连累章节上传。
+        maybeUploadCover(chapterTask)
+    }
+
+    /** 把漫画封面推到远端漫画文件夹（每本漫画本会话内只推一次）。封面缺失/失败都不影响章节上传。 */
+    private suspend fun maybeUploadCover(task: CloudUploadTask.Chapter) {
+        if (!uploadedCoverMangaIds.add(task.mangaId)) return
+
+        val coverFile = coverCache.getCustomCoverFile(task.mangaId).takeIf { it.exists() }
+            ?: coverCache.getCoverFile(task.mangaThumbnailUrl)?.takeIf { it.exists() }
+        if (coverFile == null) {
+            logcat(LogPriority.INFO) {
+                "CloudSync: no cached cover for manga ${task.mangaId} (${task.mangaTitle}), skip cover upload"
+            }
+            return
+        }
+
+        try {
+            cloudSyncService.uploadCover(
+                config = task.config,
+                remoteDirectory = task.remoteDirectory,
+                coverFile = coverFile,
+            )
+            logcat(LogPriority.INFO) { "CloudSync: cover uploaded for manga ${task.mangaId} (${task.mangaTitle})" }
+        } catch (e: CancellationException) {
+            uploadedCoverMangaIds.remove(task.mangaId)
+            throw e
+        } catch (e: Throwable) {
+            uploadedCoverMangaIds.remove(task.mangaId) // 允许后续章节上传时重试
+            logcat(LogPriority.ERROR, e) { "CloudSync: failed to upload cover for manga ${task.mangaId}" }
+        }
     }
 
     private fun removeCloudUploadTask(key: String) {
@@ -982,6 +1022,7 @@ internal sealed class CloudUploadTask {
         val chapterId: Long,
         override val mangaId: Long,
         override val mangaTitle: String,
+        val mangaThumbnailUrl: String?,
         val file: UniFile,
         val config: CloudSyncConfig,
         val remoteDirectory: String,

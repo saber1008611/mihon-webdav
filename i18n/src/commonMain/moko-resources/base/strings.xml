@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">Mihon</string>
+    <string name="app_name" translatable="false">mihonA</string>
 
     <!-- Generic strings -->
     <string name="on">On</string>
@@ -802,6 +802,7 @@
     <string name="manga_download">Download</string>
     <string name="download_unread">Unread</string>
     <string name="download_bookmarked">Bookmarked</string>
+    <string name="download_all">Download all</string>
     <string name="custom_cover">Custom cover</string>
     <string name="manga_cover">Cover</string>
     <string name="cover_saved">Cover saved</string>
@@ -1105,19 +1106,14 @@
 
     <!-- SY --> 超分（从 mihon_img_upscale 移植）：画面增强设置项文案。 -->
     <string name="reader_image_enhancement">Image enhancement</string>
-    <string name="reader_model">Model</string>
+    <string name="reader_image_enhancement_whole_chapter">Enhance whole chapter</string>
+    <string name="reader_image_enhancement_whole_chapter_summary">Super-resolve and cache every page in the chapter, not just the ones you scroll to. Online sources are fetched page by page over the network.</string>
+    <!-- SY 超分引擎后端（TachiyomiX 超分移植）。两套原生库同时全局导出同名 C++ 符号，
+         所以一个进程只装一个，切换后必须重启应用。 -->
     <!-- SY 下面两条是「可达式双引擎」改造前的旧模型名（sudo UltraCompact / Waifu2x Fast）。
          代码里已不再引用，但保留在 base 里，避免其它语言文件里残留的同名条目成为孤儿键。
          （注意：moko-resources 的 XML 解析器不接受注释内出现连续两个连字符，故 SY 标记这里不写箭头。） -->
-    <string name="reader_model_sudo_ultracompact">AnimeJaNai UltraCompact 2x</string>
-    <string name="reader_model_waifu2x_fast">Waifu2x (Fast)</string>
-    <string name="reader_model_waifu2x_cunet">Waifu2x CUnet 2x</string>
-    <string name="reader_model_anime4k_acnet">Anime4K ACNet</string>
-    <string name="reader_model_anime4k_glsl">Anime4K (GLSL)</string>
-    <string name="reader_model_anime4k_acnet_note">Built-in engine and the lightest of the three: single-channel luma CNN, runs fully on the GPU fused pipeline, sharpest output.</string>
-    <string name="reader_model_cunet_note">Cascaded U-Net with 0-3 denoise levels: strongest denoise, best for gritty or heavily compressed scans. Provided by a model pack.</string>
-    <string name="reader_model_glsl_note">Anime4K v4 shader chain with 6 official presets plus thin/darken line toggles. Full-frame pass, so very long strips are pre-scaled to fit the GPU texture limit. Provided by a model pack.</string>
-    <string name="reader_model_pack_hint">This engine needs its model pack installed. Install the matching pack, then re-open this menu.</string>
+    <string name="reader_model_anime4k_acnet_note">The only upscale model in this build: single-channel luma CNN, runs fully on the GPU fused pipeline, sharp output.</string>
     <string name="reader_anime4k_preset">Anime4K preset</string>
     <string name="reader_anime4k_preset_0">A+A Fast</string>
     <string name="reader_anime4k_preset_1">A+A HQ</string>

@@ -290,22 +290,21 @@ class ReaderPreferences(
     }
 
     // SY --> 超分（由 mihon_img_upscale 移植）：画面增强相关偏好。
-    // mihon-webdav「可达式双引擎」版保留 Anime4K ACNet(6) / waifu2x CUnet(7) /
-    // Anime4K GLSL(8)，编号见 Waifu2x.MODEL_*；其它编号一律由 Waifu2x.sanitizeModel
-    // 收敛到这三款之一。键名沿用旧分支，便于老用户直接继承配置。
-    // 其中 6 随主包内置，7/8 由模型包提供。
+    // **MihonAc 完美版只保留 Anime4K ACNet(6) 一款模型**，其它编号一律由
+    // Waifu2x.sanitizeModel 收敛到它。键名沿用旧分支，便于老用户直接继承配置。
+    // 「超分引擎」偏好（pref_realcugan_engine）已随 TX 引擎一并删除。
 
     fun realCuganEnabled() = preferenceStore.getBoolean("pref_realcugan_enabled", false)
 
-    /** 0: No Denoise, 1: Denoise 1x, 2: Denoise 2x, 3: Denoise 3x（仅 CUnet 有档位） */
+    /** 0: No Denoise, 1: Denoise 1x, 2: Denoise 2x, 3: Denoise 3x（仅 UpConv7 有档位） */
     fun realCuganNoiseLevel() = preferenceStore.getInt("pref_realcugan_noise_level", 0)
 
     /** 输出倍率；三款模型都只支持 2x，实际值由 ImageEnhancementCache.getEffectiveScale 收敛 */
     fun realCuganScale() = preferenceStore.getInt("pref_realcugan_scale", 2)
 
     /**
-     * 默认 Anime4K ACNet：三款里**唯一随主包内置**的，所以无论用户有没有装模型包，
-     * 默认值一定可用（默认到 7/8 会让没装包的用户开箱即落到「所有引擎都未安装」）。
+     * 本构建唯一的模型：Anime4K ACNet(6)。默认值直接写它；
+     * 旧偏好里残留的 4/5 等编号由 Waifu2x.sanitizeModel 在读取处收敛。
      */
     fun realCuganModel() = preferenceStore.getInt("pref_realcugan_model", Waifu2x.MODEL_ANIME4K_ACNET)
 
@@ -319,20 +318,49 @@ class ReaderPreferences(
     /** 0: FP16, 1: FP32, 2: INT8, 3: BF16 */
     fun realCuganPrecision() = preferenceStore.getInt("pref_realcugan_precision", 0)
 
+    // SY --> 「超分引擎」偏好已删除。
+    // MihonAc 完美版只保留自研融合引擎（libwaifu2x-jni.so）：ACNet 在 TX 引擎上没有
+    // 可用入口（TX 融合管线只有 3 通道版，而 ACNet 是 1 通道 luma 权重，且 TX 是
+    // 闭源二进制、加不了符号），只留一款模型就没有保留第二个引擎的理由。
+    // 旧的 pref_realcugan_engine 键不再读取。
+    // SY <--
+
+    // SY --> 2026-09-23：默认改为 true。
+    //
+    // SY --> 2026-09-23 定稿：默认回到「关」（= ncnn opt.use_fp16_arithmetic false）。
+    //
+    // 当天曾把它改成 true 并做一次性补种，为了吃 Immortalis 的 fp16 ALU 双倍吞吐，
+    // 实测确实快 1.4~1.5×（同章交错 A/B：44.6 → 31 ms/tile）。但**画质不可接受**：
+    // 在这台 GPU 上只要走 FP16（存储或运算任一），整页就会铺满规则噪点场——
+    // 白纸撒灰点率 0.28~0.29（FP32 为 0.09，TX 基准 0.0635），
+    // 用户报「所有的图都是这样，彩图就是方格形态」。
+    // 关 packing_layout / shader_local_memory 都救不回来（0.286 / 0.277）。
+    // ⇒ 这份速度收益在 Immortalis-G925 上拿不到，除非移植 TX 的 fp16 融合实现。
+    // 注意：引擎侧还有一层 ARM 兜底（waifu2x.cpp 的 arm_precision 默认 1），
+    // 即使这个偏好被手动打开，FP32 存储下 use_fp16_arithmetic 也不会生效。
     fun realCuganFp16Arithmetic() = preferenceStore.getBoolean("pref_realcugan_fp16_arithmetic", false)
 
-    // SY --> Anime4K GLSL 专属：6 个官方模式预设 + 两个线条开关。
-    // 预设编号与 [Anime4KPresets.PRESETS] 的 id 一一对应；非法值由
-    // Anime4KPresets.sanitizePreset 收敛。两条开关只影响链尾追加哪支着色器。
-    /** 0..5，见 Anime4KPresets.PRESETS（A+A / B+B / C+A × Fast/HQ）。 */
-    fun realCuganAnime4kPreset() = preferenceStore.getInt("pref_realcugan_anime4k_preset", 0)
+    // SY --> 2026-09-23：一次性「回滚」（**只回滚我们自己种下去的**）。
+    //
+    // 当天为提速用过 v1 版本键把该开关补种成 true（F1~F3 诊断包）。既然 FP16
+    // 在本机画质不可用、默认已回到 FP32，就该把那个种下去的 true 收回来。
+    // 关键点：**先检查 v1 键是否存在**，只有确定是「我们自己改的」才动它 ——
+    // 否则会把用户在设置里**主动打开**的选择覆盖掉（在 Adreno 等 GPU 上
+    // FP16 运算本来就是正确且有收益的，不该被静默关闭）。
+    // v1 键只存在于跑过 F1~F3 诊断包的设备（即本机），正式用户不会有。
+    private val fp16ArithmeticSeededV1 =
+        preferenceStore.getBoolean("pref_realcugan_fp16_arith_seeded_v1", false)
+    private val fp16ArithmeticRolledBack =
+        preferenceStore.getBoolean("pref_realcugan_fp16_arith_rolled_back_v2", false)
 
-    /** 「细化线条」：链尾追加 Thin_HQ。 */
-    fun realCuganAnime4kThinLines() = preferenceStore.getBoolean("pref_realcugan_anime4k_thin", false)
-
-    /** 「线条加黑」：链尾追加 Darken_HQ。 */
-    fun realCuganAnime4kDarkenLines() = preferenceStore.getBoolean("pref_realcugan_anime4k_darken", false)
-    // SY <--
+    init {
+        if (!fp16ArithmeticRolledBack.get()) {
+            if (fp16ArithmeticSeededV1.get()) {
+                realCuganFp16Arithmetic().set(false)
+            }
+            fp16ArithmeticRolledBack.set(true)
+        }
+    }
 
     fun realCuganMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_max_size_width", 1600)
 
@@ -343,6 +371,16 @@ class ReaderPreferences(
     fun realCuganSkipMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_skip_max_size_height", 0)
 
     fun realCuganShowStatus() = preferenceStore.getBoolean("pref_realcugan_show_status", false)
+
+    /**
+     * SY --> 整话超分：开启后，进入章节时后台把**整章每一页**都丢进超分队列
+     * （不仅仅是用户滑到的那几页），并写入 [ImageEnhancementCache] 持久化。
+     * 在线源会被逐页联网拉取（见 HttpPageLoader.enqueueAllPagesForEnhancement）。
+     * 默认关闭：保持原来的「按需 + 预载」行为，避免一进章就打满网络与 GPU。
+     * 注意：本开关依赖 realCuganEnabled()，关闭增强时它自然不生效。
+     * SY <--
+     */
+    fun realCuganWholeChapter() = preferenceStore.getBoolean("pref_realcugan_whole_chapter", false)
     // SY <--
 
     companion object {

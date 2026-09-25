@@ -233,6 +233,20 @@
                 android:resource="@xml/provider_paths" />
         </provider>
 
+        <!-- 路线 A 方案 1 的 WebDAV 封面按需下载通道（content:// 由 Coil 在网格项可见时触发下载） -->
+        <provider
+            android:name="eu.kanade.tachiyomi.source.webdav.WebDavCoverProvider"
+            android:authorities="eu.kanade.tachiyomi.webdav.cover"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <!-- 本地图源封面懒加载通道（content:// 由 Coil 在网格项滑到可见时触发 LocalCoverManager.find） -->
+        <provider
+            android:name="tachiyomi.source.local.LocalCoverProvider"
+            android:authorities="eu.kanade.tachiyomi.local.cover"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"

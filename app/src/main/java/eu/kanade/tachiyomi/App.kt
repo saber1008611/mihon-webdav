@@ -114,8 +114,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         // SY --> 2026-09-21: 此处曾有一段临时的「模型包全链路自检」代码（用 filesDir 下的
         // modelpack_selftest 文件门控），用于验证「已装模型包 → 解压 → 按路径加载权重/着色器」。
         // 真机验证通过（4 款模型 SUMMARY loaded=4/4）后已删除。
-        // 注意：当前宿主**不内置任何模型权重**，模型全部来自已安装的 mihon.upscale.modelpack
-        // 模型包（见 util/waifu2x/ModelPackLoader.kt）；包没装时对应模型不可用，超分静默回退原图。
+        // 2026-09-23（MihonAc 完美版）：模型包热插拔体系（ModelPackLoader）已整体删除，
+        // 超分权重只从宿主内置 assets 取（本构建仅 Anime4K ACNet 一款）。
         // SY <--
 
         TelemetryConfig.init(applicationContext)

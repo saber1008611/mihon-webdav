@@ -798,8 +798,49 @@ object ImageEnhancer {
         }
     }
 
+    /**
+     * SY --> 抢占活跃超分请求（中止它，可选把该页补回队列）。
+     *
+     * 【2026-09-23 修复：进度感知，消除「翻页把当前页进度清零」】
+     *
+     * 现象（用户实测）：单页翻页模式下，当前页超分到一半时翻到下一页，该页进度会
+     * **从 0 重新开始**。
+     *
+     * 机制：本函数调用 [Waifu2x.abortProcessing]，对原生而言是**整页作废** ——
+     * 已算完的 tile 不保留，重新排到后从第 0 块重算。而翻页模式下可见页入队
+     * （见 [enqueue] 的 highPriority 分支）与 [reprioritizeAround] 都可能触发一次
+     * 抢占，于是「翻页越快、白扔越多」，最坏一次白扔整整一页算力（本机
+     * 1782×2560 ≈ 3.2 秒）。更隐蔽的代价是：这些重复提交还会放大
+     * 「滚动期提交次数 ∝ 楔死帧数」的卡顿（见 waifu2x.cpp 中 interaction_full_stop
+     * 的实测结论），等于自己加重卡顿。
+     *
+     * 修法：只在「打断的损失足够小」时才打断。原生进度已过
+     * [PREEMPT_MIN_PROGRESS_PCT] 时**放弃抢占**、让它自然收尾 —— 被抢占的页本来
+     * 就会补回队列（requeue=true），所以不会漏算，只是顺序上晚一点；
+     * 进度还低时才打断（损失小，又能让新可见页尽早开始）。
+     * SY <--
+     */
     private fun preemptActiveRequest(reason: String, requeue: Boolean = false) {
         val request = activeRequest ?: return
+
+        // SY --> 进度感知拦截：**只拦「会补回队列」的抢占**。
+        // cancelAll / 换章节 / 重置 等场景不走这里（或 requeue=false），语义上就是要
+        // 立刻中止，不能因为进度高就拖住它们。SY <--
+        if (requeue) {
+            val progress: Int = try {
+                Waifu2x.getProgressPercent()
+            } catch (_: Throwable) {
+                -1
+            }
+            if (progress in PREEMPT_MIN_PROGRESS_PCT..100) {
+                logcat(LogPriority.DEBUG) {
+                    "ImageEnhancer: Keep running page $activePageIndex at $progress% " +
+                        "(>= $PREEMPT_MIN_PROGRESS_PCT%: preempting would lose a whole page; $reason)"
+                }
+                return
+            }
+        }
+
         if (requeue) {
             request.requeueOnCancel.set(true)
         }
@@ -904,3 +945,15 @@ object ImageEnhancer {
 // 不承担常规性能调节职责。要更激进/更保守只改这里。
 // SY <--
 private const val ENHANCEMENT_JOB_TIMEOUT_MS = 90_000L
+
+// SY --> 抢占活跃请求的「进度门槛」（见 [ImageEnhancer.preemptActiveRequest]）。
+//
+// 原生进度 ≥ 此值时**不打断**当前页，让它跑完。理由：原生 abort 是整页作废，
+// 重排后从第 0 块重算，损失 = 进度 × 单页耗时（本机 1782×2560 ≈ 3.2s）；
+// 而多等的只是 (1 - 进度) × 单页耗时。进度越高，打断越亏。
+//
+// 调大 → 更少白算算力、但新可见页要多等一会儿才开始；
+// 调小 → 新页更早开始、但更常把快算完的页推倒重来。
+// 70% 是「白扔不超过三成、新页最多多等约 1 秒」的折中。
+// SY <--
+private const val PREEMPT_MIN_PROGRESS_PCT = 70

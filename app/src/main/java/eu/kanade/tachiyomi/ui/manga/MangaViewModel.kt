@@ -646,6 +646,14 @@ class MangaViewModel(
             .map { it.chapter }
     }
 
+    /** 整本下载：下载全部「尚未下载」的章节（不论是否已读）。 */
+    private fun getAllNotDownloadedChapters(): List<Chapter> {
+        val chapterItems = if (skipFiltered) filteredChapters.orEmpty() else allChapters.orEmpty()
+        return chapterItems
+            .filter { (_, dlStatus) -> dlStatus == Download.State.NOT_DOWNLOADED }
+            .map { it.chapter }
+    }
+
     private fun startDownload(
         chapters: List<Chapter>,
         startNow: Boolean,
@@ -709,6 +717,7 @@ class MangaViewModel(
             DownloadAction.NEXT_25_CHAPTERS -> getUnreadChaptersSorted().take(25)
             DownloadAction.UNREAD_CHAPTERS -> getUnreadChapters()
             DownloadAction.BOOKMARKED_CHAPTERS -> getBookmarkedChapters()
+            DownloadAction.ALL_CHAPTERS -> getAllNotDownloadedChapters()
         }
         if (chaptersToDownload.isNotEmpty()) {
             startDownload(chaptersToDownload, false)

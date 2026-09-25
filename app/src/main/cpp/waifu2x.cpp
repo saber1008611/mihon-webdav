@@ -1,4 +1,5 @@
 #include "waifu2x.h"
+#include "periodic_texture_guard.h"
 #include "shaders.h"
 #include "command.h"
 #include "cpu.h"
@@ -24,6 +25,134 @@
 #define TAG "Waifu2xNative"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+// SY --> Komiho Phase12: 连续滚动模式 GPU 交错让出的参数。
+// kContinuousYieldMs：连续滑动时，若用户没显式选性能档（tile_sleep_ms==0），
+//   每块之间强制让出 GPU 的下限（毫秒）。把一部分 GPU 时间留给合成线程，避免超分
+//   霸占队列导致滚动卡顿 / 长时间冻结；同时超分仍在持续工作（边滑边超分）。
+// kContinuousRecentMs：距上次交互超过此时长（毫秒）即视为「已停下阅读」，不再强制
+//   让出、恢复全速，让超分快速追帧。800ms 足以盖住手指抬起后的惯性滑动尾巴。
+namespace {
+constexpr int kContinuousYieldMs = 10;
+constexpr int64_t kContinuousRecentMs = 800;
+
+// SY --> 2026-09-23 方案D：滚动期让出量改为运行时可调（一次编译即可扫参数定阈值）。
+//   真机实测：单次 fused batch 的 submit_and_wait 阻塞 40~163ms，而原来只让出 10ms
+//   ⇒ GPU 占空比 ~88%，UI 帧被饿死到驱动 watchdog（4950ms）。所以要能按负载比例让出。
+//   取值来源（系统属性，非法值/不存在则回落编译期默认）：
+//     debug.waifu2x.scroll_yield_pct = N  → 让出 = 上次 submit 耗时 × N%
+//                                          （N=100 即 GPU 占空比 50%；0=不用此模式）
+//     debug.waifu2x.scroll_yield_ms  = M  → 固定让出 M 毫秒（pct=0 时生效；0=不让出）
+//     debug.waifu2x.scroll_batch1    = 1  → 滚动期强制 batch=1，缩短单次 submit 阻塞
+int scroll_yield_prop(const char *key, int fallback) {
+  char value[PROP_VALUE_MAX + 1] = {0};
+  const int len = __system_property_get(key, value);
+  if (len <= 0) return fallback;
+  const int parsed = atoi(value);
+  if (parsed < 0 || parsed > 1000) return fallback;
+  return parsed;
+}
+
+// 返回本次 batch 之后应让出的毫秒数（0 = 不让出）。
+// last_submit_us 为上一次 submit_and_wait 的实测阻塞耗时；按比例模式下用它做基准。
+int scroll_yield_ms_for(int64_t last_submit_us) {
+  const int pct = scroll_yield_prop("debug.waifu2x.scroll_yield_pct", 0);
+  const int fixed =
+      scroll_yield_prop("debug.waifu2x.scroll_yield_ms", kContinuousYieldMs);
+  int effective = fixed;
+  if (pct > 0 && last_submit_us > 0) {
+    const int scaled = static_cast<int>((last_submit_us / 1000) * pct / 100);
+    effective = scaled > 0 ? scaled : 1;
+  }
+  // 只在参数变化时打一行，便于真机确认属性是否生效。
+  static int logged_pct = -2;
+  static int logged_fixed = -2;
+  if (pct != logged_pct || fixed != logged_fixed) {
+    logged_pct = pct;
+    logged_fixed = fixed;
+    LOGD("Scroll yield: pct=%d fixed=%dms -> effective=%dms (last_submit=%lldus)",
+         pct, fixed, effective, static_cast<long long>(last_submit_us));
+  }
+  return effective;
+}
+
+bool scroll_force_batch1() {
+  return scroll_yield_prop("debug.waifu2x.scroll_batch1", 0) == 1;
+}
+
+// SY --> 2026-09-23 诊断：与 scroll_yield_prop 的区别是允许 -1 这个哨兵值
+//   （-1 = 跟随用户/编译期设置；0 / 正数 = 强制取值）。用于精度与 ncnn opt 的
+//   真机 A/B —— 这些开关原本只能靠改 Kotlin 设置触发重载，实测改完不保证重载。
+//   取值来源（系统属性，缺省/非法则回落 fallback）：
+//     debug.waifu2x.arm_precision       = 0 允许 ARM 走 FP16 融合（默认 1 = 强制 FP32）
+//     debug.waifu2x.fp16_arith          = 0/1 覆盖「FP16 运算」（默认 -1 = 跟随设置）
+//     debug.waifu2x.packing_layout      = 0/1 覆盖 use_packing_layout（默认 -1 = 开）
+//     debug.waifu2x.shader_local_memory = 0/1 覆盖 use_shader_local_memory（默认 -1 = 开）
+int waifu2x_prop(const char *key, int fallback) {
+  char value[PROP_VALUE_MAX + 1] = {0};
+  const int len = __system_property_get(key, value);
+  if (len <= 0) return fallback;
+  const int parsed = atoi(value);
+  if (parsed < -1 || parsed > 1000) return fallback;
+  return parsed;
+}
+// SY <--
+
+// SY --> 2026-09-23 方案A（**出厂默认**）：把「连续模式下的近期交互」也当作全停让路。
+//
+//   【为什么默认开 · 真机实测结论】天玑9400 / Immortalis-G925 上，楔死帧数 ∝ 超分
+//   GPU **提交次数**，与单次提交耗时无关 —— 只要滚动期间仍在提交，就有 ~48~52 帧
+//   被卡到驱动 watchdog 上限（4950ms）。把让出量一路放大到 1000ms（GPU 占空比约 5%）
+//   仍残留 11~13% 掉帧，且单页耗时从 3.2s 劣化到 ~70s（慢 22 倍）；而**同一支二进制**
+//   段间交替切换本开关时，全停把掉帧压到 0.2~0.4%、4950ms 冻结帧从 48/52 降到 4/10。
+//   ⇒ 方案 D（边滑边超分）没有任何可用工作点，A 严格占优。实测数据见
+//     output\方案D实测-天玑9400-20260923.md。
+//
+//   语义：滑动 / 触摸期间超分**完全暂停**（与 ui_busy 同语义，「交错让出」不再生效）；
+//   手指停下超过 kContinuousRecentMs 后立即恢复全速追帧。
+//   ⚠️ 「滑动中看不到超分、停下才继续」是本方案的**预期取舍**，不是 bug ——
+//   它与「滚动不卡」在这台机器上物理不可兼得。
+//
+//   回退到 D 行为（**仅供对照实验**，非交付配置）：
+//     adb shell setprop debug.waifu2x.ui_stop_ms 0
+//
+//   之所以做成原生属性而非 Kotlin 侧 Settings.Global：该 ROM 上 Kotlin 读
+//   Settings.Global 实测无效（设置后冷却仍是 350ms），而原生
+//   __system_property_get 已验证可用。
+
+// SY --> 交互窗口可调（2026-09-23）：A 模式下「手指停下多久后恢复超分」。
+//   默认 kContinuousRecentMs = 800ms（已验证：掉帧 0.41%、楔死 12 帧）。
+//   缩短到 300~400ms 能让「停手立刻出图」的体感更接近「超分一直在跑」——
+//   这是在不牺牲「滚动中不提交」的前提下，对 A 体验损失最直接的补偿。
+//   但窗口太短会让慢速拖拽时频繁「暂停-恢复」，反而可能掉帧，故做成属性便于扫参数。
+//   注意：Kotlin 侧抬起时还会额外 setUiBusy(true) 350ms，故实际恢复时间
+//   取两者较大值；把本值设得比 350 更小不会更早恢复。
+//     debug.waifu2x.ui_recent_ms = N   (0~10000，非法/缺省回落 800)
+int64_t recent_interaction_window_ms() {
+  char value[PROP_VALUE_MAX + 1] = {0};
+  const int len = __system_property_get("debug.waifu2x.ui_recent_ms", value);
+  if (len <= 0) return kContinuousRecentMs;
+  const int parsed = atoi(value);
+  if (parsed < 0 || parsed > 10000) return kContinuousRecentMs;
+  return static_cast<int64_t>(parsed);
+}
+
+// SY --> 2026-09-24 用户要求「滑动时继续进行超分」：**交付默认改为不停**（ui_stop_ms=0）。
+//   interaction_full_stop() 从而恒为 false ⇒ 条漫滚动全程持续提交，滑动中就能看到超分。
+//   代价：滚动期掉帧会回涨（这正是当初选 A 全停的原因，实测见
+//   output\方案D实测-天玑9400-20260923.md）。
+//   回退到 A 全停（仅供对照 / 用户反悔）：
+//     adb shell setprop debug.waifu2x.ui_stop_ms 1
+bool interaction_full_stop(bool continuous, int64_t last_interaction_ms) {
+  const int stop_ms = scroll_yield_prop("debug.waifu2x.ui_stop_ms", 0);
+  if (stop_ms <= 0 || !continuous) return false;
+  const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  return (now_ms - last_interaction_ms) < recent_interaction_window_ms();
+}
+// SY <--
+} // namespace
+// SY <--
 // SY --> Komiho Phase9: 兼容性降级提示用
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 
@@ -290,14 +419,22 @@ Waifu2x::Waifu2x(int gpuid, bool _tta_mode, int _num_threads,
 void Waifu2x::set_tilesize(int requested) {
   if (tile_size_cap <= 0) {
     const uint32_t heap_budget_mb = vkdev ? vkdev->get_heap_budget() : 0;
-    if (heap_budget_mb >= 768) {
+    // SY --> 2026-09-22：ARM GPU（vendor 0x13B5 = ARM Ltd，含 Mali/Immortalis）
+    // FP32 融合的显存带宽已是 fp16 两倍，大 tile 会让阅读器 UI 合成抢不到 GPU 而卡顿。
+    // 故 ARM 上 tile 上限压到 128（输入 tile ≈164²，正好等于自适应批量阈值的标定基准，
+    // 阈值缩放比 = 1.0，与上游调参意图一致）；同时峰值显存仅为 256 档的 1/4。
+    const bool is_arm_gpu = vkdev && vkdev->info.vendor_id() == 0x13B5u;
+    if (is_arm_gpu) {
+      tile_size_cap = 128;
+    } else if (heap_budget_mb >= 768) {
       tile_size_cap = 256;
     } else if (heap_budget_mb >= 384) {
       tile_size_cap = 192;
     } else {
       tile_size_cap = 128;
     }
-    LOGD("Tile size cap=%d (heap_budget=%uMB)", tile_size_cap, heap_budget_mb);
+    LOGD("Tile size cap=%d (heap_budget=%uMB arm=%d)", tile_size_cap,
+         heap_budget_mb, is_arm_gpu ? 1 : 0);
   }
 
   tilesize = std::clamp(requested, 32, tile_size_cap);
@@ -331,22 +468,42 @@ int Waifu2x::load(const std::string &parampath, const std::string &modelpath) {
   net.opt.use_bf16_storage = false;
   net.opt.use_bf16_packed = false;
 
-  // SY --> Komiho Phase9: ARM GPU（Mali / Immortalis）fp16 花屏修复
-  // 现象：天玑9400+（Immortalis-G925）等 ARM GPU 上，超分完成后输出规则网格状
-  //   斜纹乱码（整图没有原图内容，像坏掉的纹理），进度条正常走完。
-  // 根因：默认 precision_mode=0 会打开 fp16 storage。融合管线自带的两支计算着色器
-  //   以 GL_EXT_shader_16bit_storage + std430 声明 float16_t[] 并按紧凑排布索引
-  //   （见 waifu2x_fused_preproc.comp:15、waifu2x_fused_postproc.comp:11-13、48-50），
-  //   而 ARM 驱动对该布局的处理与 ncnn 的 cstep 假设不一致 —— 每行/每 tile 按错误
-  //   步长取样，于是 128×128 的 tile 网格上呈现规律性错位伪影。
-  //   上游 IMAGE_ENHANCEMENT_FIXES.md:12 也记载过 fp16 会在"some devices"上花屏，
-  //   当时的规避手法正是弃用 fp16（改 BF16 storage + FP32 arithmetic）；本仓库
-  //   后来重构出可选 precision_mode，默认值却又回到 fp16，等于把该修复回退了。
-  // 处理：只针对 ARM GPU 把存储精度降级为 FP32（precision_mode=1）。FP32 同样有
-  //   对应的融合管线 SPIR-V（waifu2x_fused_*_fp32_spv），依旧全程走 GPU，代价是
-  //   显存占用翻倍、速率略降，换来确定的正确性。Adreno 等非 ARM GPU 维持 fp16 不受影响。
+  // SY --> Komiho Phase9（2026-09-22 修正，MmihonZ2）：
+  // Immortalis-G925（天玑9400+）驱动上两条「快路径」都会出事：
+  //   · fp16 融合着色器 → 规则网格花屏（已实测，R/G=0.36 均匀青偏）← MmihonY
+  //   · BF16 staged（ncnn 标准路径）→ 直接 GPU fault，进程被杀 = 闪退回桌面 ← MmihonZ
+  // 唯一在该驱动上**既正确又不崩**的是 FP32 融合（MmihonX 同款路径；用户只报它「卡」，
+  // 从没报崩/花屏）。故 ARM 上**无条件 FP32 融合**（luma 与 3 通道都走 FP32）。
+  // 治「卡」靠下面把 tile/batch 收敛（给 UI 合成留 GPU 空隙），而非换精度——
+  // 换精度在 Immortalis 上只会更糟。非 ARM（Adreno 等）fp16 融合本就正常，保持 0 不变。
   // SY <--
-  if (vkdev && precision_mode == 0) {
+  // SY --> 2026-09-23 诊断开关：debug.waifu2x.force_fp16=1 时跳过下面的 ARM FP32 收敛，
+  //   保留 precision_mode=0（FP16 融合）。用途只有一个：在真机上 A/B 实测
+  //   「FP16 融合在这台 Immortalis-G925 上到底对不对、快多少」。默认 0 = 出厂仍 FP32。
+  const bool force_fp16_on_arm =
+      scroll_yield_prop("debug.waifu2x.force_fp16", 0) == 1;
+  // SY --> 2026-09-23 定稿：ARM 默认精度回到 **1（FP32 融合）**。
+  //
+  // 当天曾把默认值改成 0 以吃 FP16 的带宽/ALU 收益（实测 44.6 → 31 ms/tile，
+  // 1.4~1.5×），但**画质不可接受**，真机取证（天玑9400 / Immortalis-G925 MC12）：
+  //   · 白纸撒灰点率：FP16 融合 0.28~0.29（8 页中位 0.29） vs FP32 0.09；
+  //     第三方基准 TX（同机型）0.0635 —— FP32 与 TX 同级，FP16 是异常。
+  //   · 目视：整页被规则噪点场覆盖（用户报「所有的图都是这样，彩图就是方格形态」）。
+  //   · 已排除的开关嫌疑：debug.waifu2x.packing_layout=0 → 0.286、
+  //     debug.waifu2x.shader_local_memory=0 → 0.277，**都没救**。
+  //     ⇒ 花屏是 FP16 融合实现本身的问题，不是打包布局/着色器本地内存配置。
+  //   · TX 那套引擎跑在 precision=fp16 + fp16_arithmetic=0 上却完全干净，
+  //     说明差距在**实现**，不在能力位（两者 ncnn 能力串逐项相同，含
+  //     VK_KHR_cooperative_matrix）。想拿这份速度只能移植 TX 的实现。
+  // 结论：本机默认 FP32。FP16 仅作诊断（arm_precision=0 可现场复现上述花屏）。
+  const int arm_precision_prop = waifu2x_prop("debug.waifu2x.arm_precision", 1);
+  const bool allow_fp16_on_arm = force_fp16_on_arm || arm_precision_prop == 0;
+  if (force_fp16_on_arm) {
+    LOGW("debug.waifu2x.force_fp16=1: skipping ARM FP32 convergence "
+         "(experimental FP16 fused path)");
+  }
+  // SY <--
+  if (vkdev && precision_mode == 0 && !allow_fp16_on_arm) {
     const ncnn::GpuInfo &gpu_info = vkdev->info;
     const char *gpu_name = gpu_info.device_name();
     std::string gpu_name_lower;
@@ -363,10 +520,10 @@ int Waifu2x::load(const std::string &parampath, const std::string &modelpath) {
         gpu_name_lower.find("mali") != std::string::npos ||
         gpu_name_lower.find("immortalis") != std::string::npos;
     if (is_arm_gpu) {
-      LOGW("ARM GPU '%s' (vendor=0x%x) detected: forcing FP32 storage to avoid "
-           "fp16 grid artifact",
+      LOGW("ARM GPU '%s' (vendor=0x%x): forcing FP32 fused storage "
+           "(fp16 fused = Immortalis artifact; bf16 staged = driver crash)",
            gpu_name ? gpu_name : "unknown", gpu_info.vendor_id());
-      precision_mode = 1;
+      precision_mode = 1; // FP32 fused: correct + stable on Immortalis
     }
   }
 
@@ -387,8 +544,15 @@ int Waifu2x::load(const std::string &parampath, const std::string &modelpath) {
   default:
     net.opt.use_fp16_packed = true;
     net.opt.use_fp16_storage = true;
-    net.opt.use_fp16_arithmetic =
-        fp16_arithmetic && vkdev && vkdev->info.support_fp16_arithmetic();
+    {
+      // SY --> 2026-09-23 诊断：可被 debug.waifu2x.fp16_arith 覆盖。
+      const int fp16_arith_prop = waifu2x_prop("debug.waifu2x.fp16_arith", -1);
+      const bool want_arith =
+          fp16_arith_prop >= 0 ? fp16_arith_prop == 1 : fp16_arithmetic;
+      net.opt.use_fp16_arithmetic =
+          want_arith && vkdev && vkdev->info.support_fp16_arithmetic();
+      // SY <--
+    }
     break;
   }
   const bool fp16_arithmetic_supported =
@@ -419,13 +583,36 @@ int Waifu2x::load(const std::string &parampath, const std::string &modelpath) {
   // 创建分支会把 gpu_pipeline_available 收回 false，自动退回 staged 路径。
   // SY <--
 
-  net.opt.use_packing_layout = true; // Enable packing for better performance
+  // SY --> 2026-09-23 诊断：packing_layout / shader_local_memory 也做成可覆盖，
+  //   用来在真机上单独定位「剩余的性能差距」是打包布局还是着色器本地内存。
+  const int packing_prop = waifu2x_prop("debug.waifu2x.packing_layout", -1);
+  net.opt.use_packing_layout =
+      packing_prop < 0 ? true : (packing_prop == 1); // packing for performance
+  // SY <--
 
   // Additional optimizations (safe for all devices)
   net.opt.use_sgemm_convolution = true;    // Use SGEMM for convolution
   net.opt.use_winograd_convolution = true; // Winograd convolution
   net.opt.use_local_pool_allocator = true; // Better memory allocation
-  net.opt.use_shader_local_memory = true;  // Use shader local memory
+  // SY --> 2026-09-23 诊断：可覆盖
+  const int slm_prop = waifu2x_prop("debug.waifu2x.shader_local_memory", -1);
+  net.opt.use_shader_local_memory =
+      slm_prop < 0 ? true : (slm_prop == 1); // Use shader local memory
+  // SY <--
+
+  // SY --> 2026-09-23 诊断：融合路径正确性直接取决于这几个开关落定后的取值 ——
+  //   尤其 use_packing_layout + use_fp16_storage 会让 ncnn 的 VkMat 变成 pack4
+  //   （elemsize = 2*4 = 8），而 VkMat::cstep 是以 **elemsize 为单位** 计数的。
+  //   融合着色器若按 pack1（cstep 以 fp16 元素计）寻址，就会整体错位。
+  LOGD("Net options: precision=%d fp16_storage=%d fp16_packed=%d fp16_arith=%d "
+       "packing_layout=%d shader_local_memory=%d (props: arm_precision=%d "
+       "fp16_arith=%d packing=%d slm=%d)",
+       precision_mode, net.opt.use_fp16_storage ? 1 : 0,
+       net.opt.use_fp16_packed ? 1 : 0, net.opt.use_fp16_arithmetic ? 1 : 0,
+       net.opt.use_packing_layout ? 1 : 0,
+       net.opt.use_shader_local_memory ? 1 : 0, arm_precision_prop,
+       waifu2x_prop("debug.waifu2x.fp16_arith", -1), packing_prop, slm_prop);
+  // SY <--
 
   net.opt.num_threads = num_threads;
 
@@ -545,22 +732,50 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
   const auto t_start = std::chrono::steady_clock::now();
 
   bool is_grayscale = !disable_grayscale_check;
+  int gray_color_pixels = 0;
+  int gray_threshold = 0;
   if (is_grayscale) {
     const unsigned char *pixels =
         static_cast<const unsigned char *>(packed_input.data);
     int color_pixels = 0;
-    const int color_threshold = w * h / 200;
+    // SY --> 2026-09-23 判决阈值重标定（真机截图实测，天玑9400 / sudo-UltraCompact）：
+    //   旧判据「色差>5 的像素超过 w*h/200（0.5%）即算彩色」在扫描版黑白漫画上
+    //   **永远判成彩色** —— 实测黑白页有 2.2~2.7% 的像素色差>5（网点/JPEG 振铃），
+    //   于是下方的「灰度强制输出」从不生效，FP16 路径的色度噪声全部暴露成绿点。
+    //   新判据用「色差>24 的像素占比 < 3%」判黑白，实测分离度：
+    //     黑白页 0.00%  ← 判黑白
+    //     彩色封面 93.9% / 彩色插页 8.8%  ← 判彩色
+    //   与 TX 行为一致（TX 的 "Grayscale image detected, forcing pure grayscale
+    //   output." 在这些黑白页上会命中，输出色差恒为 0）。
+    const int color_threshold = w * h * 3 / 100;
     for (int i = 0; i < w * h; i++) {
       const unsigned char *pixel = pixels + i * 4;
-      if (std::abs((int)pixel[0] - (int)pixel[1]) > 5 ||
-          std::abs((int)pixel[0] - (int)pixel[2]) > 5) {
+      const int bb = (int)pixel[0];
+      const int gg = (int)pixel[1];
+      const int rr = (int)pixel[2];
+      const int spread = std::max(std::abs(rr - gg),
+                                  std::max(std::abs(gg - bb), std::abs(rr - bb)));
+      if (spread > 24) {
         if (++color_pixels > color_threshold) {
           is_grayscale = false;
           break;
         }
       }
     }
+    gray_color_pixels = color_pixels;
+    gray_threshold = color_threshold;
   }
+  // SY --> 2026-09-23 灰度判定可被 debug.waifu2x.grayscale 覆盖
+  //   （-1/缺省 = 自动检测；0 = 强制按彩色处理；1 = 强制按灰阶处理）。
+  const int gray_prop = waifu2x_prop("debug.waifu2x.grayscale", -1);
+  if (gray_prop >= 0) {
+    is_grayscale = gray_prop == 1;
+    LOGD("Grayscale override: prop=%d -> gray=%d", gray_prop,
+         is_grayscale ? 1 : 0);
+  }
+  LOGD("Grayscale check: color_pixels=%d threshold=%d(spread>24, 3%%) -> gray=%d",
+       gray_color_pixels, gray_threshold, is_grayscale ? 1 : 0);
+  // SY <--
 
   ncnn::VkAllocator *blob_vkallocator = vkdev->acquire_blob_allocator();
   ncnn::VkAllocator *staging_vkallocator = vkdev->acquire_staging_allocator();
@@ -619,6 +834,20 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
     batch_capacity = 3;
   }
   batch_capacity = std::min(batch_capacity, tile_count);
+  // SY --> 2026-09-23：ARM 上的批量上限/起始批量改为运行时可调
+  //   （debug.waifu2x.arm_batch = 1..4；0/缺省 = 保持 2026-09-22 的保守值 2/1）。
+  //
+  //   为什么要放开：2026-09-22 把 ARM 批量压到 capacity=2、target=1，前提是
+  //   「滚动期间仍在持续提交」——那时长批量会把 UI 合成饿死。但方案 A（滚动期全停）
+  //   落地后，提交前有关卡（pre-submit 等待循环）会先等 UI 空闲，于是长批量
+  //   **只影响静止时的追帧速度，不再威胁滚动流畅度**；而 target=1 等于让 77 块 tile
+  //   做 77 次 submit_and_wait，每次都付 vkQueueSubmit + fence 等待的固定开销。
+  const bool is_arm_gpu = vkdev && vkdev->info.vendor_id() == 0x13B5u;
+  const int arm_batch_prop = scroll_yield_prop("debug.waifu2x.arm_batch", 0);
+  if (is_arm_gpu && arm_batch_prop <= 0) {
+    batch_capacity = std::min(batch_capacity, 2);
+  }
+  // SY <--
 
   // SY --> Komiho Phase11: 自适应批量的阈值改为随 tile 面积缩放。
   // 原有 12ms/24ms 是按 128 的 tile、prepadding=18（即输入 164x164）标定的。
@@ -639,7 +868,16 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
   // SY --> Komiho Phase11: 起始批量从 1 提到 2。实测每块 tile 的 GPU 时间远大于
   // 一次 submit 的固定开销，批量 1 等于把 GPU 反复饿停；从 2 起步能立刻拿到
   // 摊销收益，同时首次提交仍然只有两块，不至于拖住首帧交互。
-  int batch_target = std::min(2, batch_capacity);
+  // SY --> 2026-09-22：ARM 上起始批量降到 1——FP32 融合本就更吃带宽，首帧不被
+  // 多块 tile 拖住，UI 更跟手、不卡。
+  // SY --> 2026-09-23：改为可调（debug.waifu2x.arm_batch）；见上面 batch_capacity 处。
+  int batch_target;
+  if (is_arm_gpu) {
+    batch_target = arm_batch_prop > 0 ? std::min(arm_batch_prop, batch_capacity)
+                                      : 1;
+  } else {
+    batch_target = std::min(2, batch_capacity);
+  }
   // SY <--
   LOGD("Fused Vulkan scheduling: heap_budget=%uMB batch_capacity=%d "
        "initial_batch=%d tiles=%d grow_threshold=%lldus shrink_threshold=%lldus",
@@ -663,8 +901,21 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
     extractor_slots.push_back(empty_extractor);
   }
 
+  // SY --> 2026-09-23 诊断：融合路径上各 blob 的真实打包形态。
+  //   注意 VkMat::cstep 的单位是 elemsize（= 标量字节数 × elempack），
+  //   而不是标量元素个数 —— 着色器按 storage_t[] 线性寻址时，只有 pack1 时两者相等。
+  LOGD("Fused blob packings: src(elemsize=%zu pack=%d cstep=%zu %dx%dx%d) "
+       "tile_in(elemsize=%zu pack=%d cstep=%zu %dx%dx%d)",
+       input_gpu.elemsize, input_gpu.elempack, (size_t)input_gpu.cstep,
+       input_gpu.w, input_gpu.h, input_gpu.c,
+       input_tile_slots[0].elemsize, input_tile_slots[0].elempack,
+       (size_t)input_tile_slots[0].cstep, input_tile_slots[0].w,
+       input_tile_slots[0].h, input_tile_slots[0].c);
+  // SY <--
+
   int batch_size = 0;
   int completed_tiles = 0;
+  bool pack_logged = false; // SY --> 2026-09-23 诊断：打包形态只打一次
   ncnn::VkCompute command(vkdev);
   std::vector<ncnn::VkMat> retained_mats;
   retained_mats.reserve(batch_capacity);
@@ -677,7 +928,8 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
   for (int yi = 0; yi < ytiles; yi++) {
     for (int xi = 0; xi < xtiles; xi++) {
       bool paused_for_ui = false;
-      while (ui_busy_ptr && ui_busy_ptr->load()) {
+      while ((ui_busy_ptr && ui_busy_ptr->load()) ||
+             interaction_full_stop(continuous_mode, last_interaction_ms.load())) {
         paused_for_ui = true;
         if (should_abort_ptr && should_abort_ptr->load())
           return -1;
@@ -691,8 +943,19 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
         batch_target = std::max(1, batch_target - 1);
         // SY <--
       }
-      if (should_abort_ptr && should_abort_ptr->load())
+      if (should_abort_ptr && should_abort_ptr->load()) {
+        // SY --> 诊断（2026-09-23）：抢占会让整页作废、重排后从第 0 块重算。
+        // 这里记录白扔了多少块，用来客观验证 ImageEnhancer 的「进度感知抢占」
+        // （PREEMPT_MIN_PROGRESS_PCT）是否真的减少了白算 —— Kotlin 侧 logcat()
+        // 在 release 下不进系统日志，只有原生这个 tag 可 grep。
+        const int total_tiles = ytiles * xtiles;
+        const int done_tiles = yi * xtiles + xi;
+        LOGD("Abort: page discarded after %d/%d tiles (~%d%% wasted)",
+             done_tiles, total_tiles,
+             total_tiles > 0 ? done_tiles * 100 / total_tiles : 0);
+        // SY <--
         return -1;
+      }
 
       const int x = xi * tilesize;
       const int y = yi * tilesize;
@@ -740,6 +1003,16 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
             input_result == 0
                 ? extractor.extract(output_index, output_tile_gpu, command)
                 : -1;
+        // SY --> 2026-09-23 诊断：网络输出 blob 的打包形态（postproc 的寻址基准）。
+        if (!pack_logged && extract_result == 0 && !output_tile_gpu.empty()) {
+          pack_logged = true;
+          LOGD("Fused net output packing: elemsize=%zu pack=%d cstep=%zu "
+               "%dx%dx%d",
+               output_tile_gpu.elemsize, output_tile_gpu.elempack,
+               (size_t)output_tile_gpu.cstep, output_tile_gpu.w,
+               output_tile_gpu.h, output_tile_gpu.c);
+        }
+        // SY <--
         if (input_result != 0 || extract_result != 0 ||
             output_tile_gpu.empty()) {
           LOGE("Fused inference record failed: tile=%d slot=%d input=%d "
@@ -824,7 +1097,8 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
       const bool is_last_tile = xi == xtiles - 1 && yi == ytiles - 1;
       if (batch_size >= batch_target || is_last_tile) {
         bool paused_before_submit = false;
-        while (ui_busy_ptr && ui_busy_ptr->load()) {
+        while ((ui_busy_ptr && ui_busy_ptr->load()) ||
+             interaction_full_stop(continuous_mode, last_interaction_ms.load())) {
           paused_before_submit = true;
           if (should_abort_ptr && should_abort_ptr->load())
             return -1;
@@ -857,7 +1131,8 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
         batch_size = 0;
 
         const int previous_batch_target = batch_target;
-        if (ui_busy_ptr && ui_busy_ptr->load()) {
+        if ((ui_busy_ptr && ui_busy_ptr->load()) ||
+            interaction_full_stop(continuous_mode, last_interaction_ms.load())) {
           // SY --> Komiho Phase11: 同上，退一步而非清零
           batch_target = std::max(1, batch_target - 1);
           // SY <--
@@ -875,17 +1150,37 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
 
         if (should_abort_ptr && should_abort_ptr->load())
           return -1;
-        if (tile_sleep_ms > 0 && !is_last_tile) {
-          std::this_thread::sleep_for(
-              std::chrono::milliseconds(tile_sleep_ms));
+        // SY --> Komiho Phase12: 连续滚动模式 GPU 交错让出。
+        // 滑动期间（连续模式 + 近期有交互）强制一个让出下限，把 GPU 留一部分给合成
+        // 线程；停下阅读（>kContinuousRecentMs 无交互）后恢复全速追帧。用户显式选了
+        // perfMode=1/2（tile_sleep_ms>0）时以更大的 sleep 为准。
+        const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        const bool recent_interaction =
+            continuous_mode &&
+            (now_ms - last_interaction_ms.load()) < recent_interaction_window_ms();
+        const int effective_sleep =
+            tile_sleep_ms > 0
+                ? tile_sleep_ms
+                : (recent_interaction ? scroll_yield_ms_for(submit_us) : 0);
+        // SY --> 2026-09-23 方案D 可选档：滚动期强制 batch=1（对下一次提交生效），
+        // 把单次 submit 阻塞时长压到最小 —— 一次提交阻塞 40ms+ 本身就够吃掉好几个帧预算。
+        if (recent_interaction && scroll_force_batch1()) {
+          batch_target = 1;
         }
+        if (effective_sleep > 0 && !is_last_tile) {
+          std::this_thread::sleep_for(
+              std::chrono::milliseconds(effective_sleep));
+        }
+        // SY <--
       }
     }
   }
 
   ncnn::Mat packed_output(target_w, target_h, out_pixels, (size_t)4u, 1);
   {
-    while (ui_busy_ptr && ui_busy_ptr->load()) {
+    while ((ui_busy_ptr && ui_busy_ptr->load()) ||
+           interaction_full_stop(continuous_mode, last_interaction_ms.load())) {
       if (should_abort_ptr && should_abort_ptr->load())
         return -1;
       std::this_thread::sleep_for(std::chrono::milliseconds(8));
@@ -948,18 +1243,21 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
 
   const float norm = 1.0f / 255.0f;
 
-  // Robust grayscale detection: allow up to 0.5% of pixels to be "colorful"
-  // (noise tolerance)
+  // SY --> 2026-09-23 判决阈值与融合路径保持一致（spread>24 占比 <3% 判黑白）。
+  //   理由见上面 fused 路径处的长注释（旧 0.5% / 色差>5 在扫描版黑白漫画上永不命中）。
   int color_pixel_count = 0;
-  int color_threshold_count = w * h / 200; // 0.5%
+  int color_threshold_count = w * h * 3 / 100; // 3%
   const bool detect_grayscale = !disable_grayscale_check;
 
   for (int i = 0; i < w * h; i++) {
     // Detect if pixel has significant color
-    if (detect_grayscale &&
-        (std::abs(in_r[i] - in_g[i]) > 5.0f ||
-         std::abs(in_r[i] - in_b[i]) > 5.0f)) {
-      color_pixel_count++;
+    if (detect_grayscale) {
+      const float spread =
+          std::max(std::abs(in_r[i] - in_g[i]),
+                   std::max(std::abs(in_g[i] - in_b[i]),
+                            std::abs(in_r[i] - in_b[i])));
+      if (spread > 24.0f)
+        color_pixel_count++;
     }
 
     out_b[i] = in_b[i] * norm;
@@ -1055,10 +1353,12 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
   BoundedTaskPool postprocess(1, 2);
   int64_t postprocess_wait_us = 0;
   bool second_postprocess_worker = false;
+  int guarded_texture_tiles = 0;
 
   for (int yi = 0; yi < ytiles; yi++) {
     for (int xi = 0; xi < xtiles; xi++) {
-      while (ui_busy_ptr && ui_busy_ptr->load()) {
+      while ((ui_busy_ptr && ui_busy_ptr->load()) ||
+             interaction_full_stop(continuous_mode, last_interaction_ms.load())) {
         if (should_abort_ptr && should_abort_ptr->load()) {
           postprocess.wait();
           return -1;
@@ -1106,6 +1406,72 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
         }
       }
       const int min_out_channels = luma_model ? 1 : 3;
+      // SY <--
+
+      // SY --> 2026-09-25: 网点色块防护（上游 v1.3.10）。
+      // 检测本 tile 是否含大面积周期纹理（漫画网点纸）。命中则把 tile 缩到 3/4、
+      // 居中白边后喂给网络，输出时再用 restored_output_coordinate 重采样回原尺寸，
+      // 规避超分模型在网点处产生的色块。仅对单色 + 网点密集的页触发（由 JNI 侧
+      // 的 enable_periodic_texture_guard + 单色判定共同把关）。
+      int risky_cells = 0;
+      int total_cells = 0;
+      const bool guard_tile = enable_periodic_texture_guard &&
+          periodic_texture_guard::occupies_too_much(
+              w_tile, h_tile,
+              [&](int sample_x, int sample_y) {
+                const float value = in_tile.channel(0)
+                                        .row(prepadding + sample_y)
+                                        [prepadding + sample_x];
+                return static_cast<int>(value * 255.0f + 0.5f);
+              },
+              &risky_cells, &total_cells);
+      int guard_border_x = 0;
+      int guard_border_y = 0;
+      if (guard_tile) {
+        const int scaled_width =
+            in_tile_w * periodic_texture_guard::kShrinkNumerator /
+            periodic_texture_guard::kShrinkDenominator;
+        const int scaled_height =
+            in_tile_h * periodic_texture_guard::kShrinkNumerator /
+            periodic_texture_guard::kShrinkDenominator;
+        guard_border_x = (in_tile_w - scaled_width) / 2;
+        guard_border_y = (in_tile_h - scaled_height) / 2;
+        // 3 通道 RGB tile：双线性缩采样后居中白边（0-1 归一化下的「白」= 1.0）
+        ncnn::Mat scaled_tile;
+        ncnn::resize_bilinear(in_tile, scaled_tile, scaled_width, scaled_height,
+                              net.opt);
+        ncnn::Mat guarded_input(in_tile_w, in_tile_h, 3);
+        guarded_input.fill(1.0f);
+        for (int c = 0; c < 3; ++c) {
+          const ncnn::Mat source = scaled_tile.channel(c);
+          ncnn::Mat destination = guarded_input.channel(c);
+          for (int row = 0; row < scaled_height; ++row) {
+            memcpy(destination.row(guard_border_y + row) + guard_border_x,
+                   source.row(row), scaled_width * sizeof(float));
+          }
+        }
+        in_tile = guarded_input;
+        // 单通道 luma tile：同步缩采样 + 居中白边（白 = 亮度 1.0）
+        if (luma_model) {
+          ncnn::Mat scaled_luma;
+          ncnn::resize_bilinear(in_luma_tile, scaled_luma, scaled_width,
+                                scaled_height, net.opt);
+          ncnn::Mat guarded_luma(in_tile_w, in_tile_h, 1);
+          guarded_luma.fill(1.0f);
+          {
+            const ncnn::Mat source = scaled_luma.channel(0);
+            ncnn::Mat destination = guarded_luma.channel(0);
+            for (int row = 0; row < scaled_height; ++row) {
+              memcpy(destination.row(guard_border_y + row) + guard_border_x,
+                     source.row(row), scaled_width * sizeof(float));
+            }
+          }
+          in_luma_tile = guarded_luma;
+        }
+        ++guarded_texture_tiles;
+        LOGD("Guarding periodic texture tile %d,%d (%d/%d cells)", xi, yi,
+             risky_cells, total_cells);
+      }
       // SY <--
 
       // Run inference on tile (GPU WORK)
@@ -1223,7 +1589,7 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
 
           if (dst_y >= target_h)
             break;
-          if (src_y >= out_tile_captured.h)
+          if (!guard_tile && src_y >= out_tile_captured.h)
             break;
 
           unsigned char *dst_row =
@@ -1259,17 +1625,50 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
           int copy_w = out_w_tile;
           if (out_x + copy_w > target_w)
             copy_w = target_w - out_x;
-          if (src_offset_x + copy_w > out_tile_captured.w)
+          if (!guard_tile && src_offset_x + copy_w > out_tile_captured.w)
             copy_w = out_tile_captured.w - src_offset_x;
 
           int j = 0;
           // SY --> 单通道模型走标量 YCbCr 合成路径（NEON 快路径只覆盖 3 通道直出）
           if (luma_model) {
             for (; j < copy_w; j++) {
-              const float y = ptr_l[j];
-              const float b0 = ptr_b[j];
-              const float g0 = ptr_g[j];
-              const float r0 = ptr_r[j];
+              float y, b0, g0, r0;
+              if (guard_tile) {
+                // SY --> 2026-09-25: 网点防护命中时，目标像素映射回 3/4 缩采样
+                // 输出空间做双线性重采样（与上面的 guarded_input 对称）。
+                const float sample_x =
+                    periodic_texture_guard::restored_output_coordinate(
+                        j, guard_border_x, prepadding, scale);
+                const float sample_y =
+                    periodic_texture_guard::restored_output_coordinate(
+                        i, guard_border_y, prepadding, scale);
+                const int x0 = std::clamp(static_cast<int>(std::floor(sample_x)),
+                                          0, out_tile_captured.w - 1);
+                const int y0 = std::clamp(static_cast<int>(std::floor(sample_y)),
+                                          0, out_tile_captured.h - 1);
+                const int x1 = std::min(out_tile_captured.w - 1, x0 + 1);
+                const int y1 = std::min(out_tile_captured.h - 1, y0 + 1);
+                const float fx = sample_x - std::floor(sample_x);
+                const float fy = sample_y - std::floor(sample_y);
+                const auto sample = [&](const float *channel) {
+                  const float top =
+                      channel[y0 * out_tile_captured.w + x0] * (1.0f - fx) +
+                      channel[y0 * out_tile_captured.w + x1] * fx;
+                  const float bottom =
+                      channel[y1 * out_tile_captured.w + x0] * (1.0f - fx) +
+                      channel[y1 * out_tile_captured.w + x1] * fx;
+                  return (top * (1.0f - fy) + bottom * fy);
+                };
+                y = sample(tile_l);
+                b0 = sample(bic_b);
+                g0 = sample(bic_g);
+                r0 = sample(bic_r);
+              } else {
+                y = ptr_l[j];
+                b0 = ptr_b[j];
+                g0 = ptr_g[j];
+                r0 = ptr_r[j];
+              }
               const float y_base = 0.299f * r0 + 0.587f * g0 + 0.114f * b0;
               // BT.601 色度差（B'-Y' / R'-Y'）；逆变换里
               // G' = Y' - 0.7141*Cr - 0.3441*Cb（等价于 (Y'-0.299R'-0.114B')/0.587）
@@ -1295,7 +1694,7 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
           const float32x4_t scale_255 = vdupq_n_f32(255.f);
           const float32x4_t gray_scale = vdupq_n_f32(1.f / 3.f);
-          for (; j + 8 <= copy_w; j += 8) {
+          for (; !guard_tile && j + 8 <= copy_w; j += 8) {
             float32x4_t r0 = vmulq_f32(vld1q_f32(ptr_r + j), scale_255);
             float32x4_t r1 = vmulq_f32(vld1q_f32(ptr_r + j + 4), scale_255);
             float32x4_t g0 = vmulq_f32(vld1q_f32(ptr_g + j), scale_255);
@@ -1324,9 +1723,40 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
           }
 #endif
           for (; j < copy_w; j++) {
-            float r = ptr_r[j] * 255.0f;
-            float g = ptr_g[j] * 255.0f;
-            float b = ptr_b[j] * 255.0f;
+            float r, g, b;
+            if (!guard_tile) {
+              r = ptr_r[j] * 255.0f;
+              g = ptr_g[j] * 255.0f;
+              b = ptr_b[j] * 255.0f;
+            } else {
+              // SY --> 2026-09-25: 网点防护命中 → 回 3/4 缩采样空间双线性重采样
+              const float sample_x =
+                  periodic_texture_guard::restored_output_coordinate(
+                      j, guard_border_x, prepadding, scale);
+              const float sample_y =
+                  periodic_texture_guard::restored_output_coordinate(
+                      i, guard_border_y, prepadding, scale);
+              const int x0 = std::clamp(static_cast<int>(std::floor(sample_x)),
+                                        0, out_tile_captured.w - 1);
+              const int y0 = std::clamp(static_cast<int>(std::floor(sample_y)),
+                                        0, out_tile_captured.h - 1);
+              const int x1 = std::min(out_tile_captured.w - 1, x0 + 1);
+              const int y1 = std::min(out_tile_captured.h - 1, y0 + 1);
+              const float fx = sample_x - std::floor(sample_x);
+              const float fy = sample_y - std::floor(sample_y);
+              const auto sample = [&](const float *channel) {
+                const float top =
+                    channel[y0 * out_tile_captured.w + x0] * (1.0f - fx) +
+                    channel[y0 * out_tile_captured.w + x1] * fx;
+                const float bottom =
+                    channel[y1 * out_tile_captured.w + x0] * (1.0f - fx) +
+                    channel[y1 * out_tile_captured.w + x1] * fx;
+                return (top * (1.0f - fy) + bottom * fy) * 255.0f;
+              };
+              b = sample(tile_b);
+              g = sample(tile_g);
+              r = sample(tile_r);
+            }
 
             if (is_grayscale) {
               float gray = (r + g + b) * 0.333333f;
@@ -1377,13 +1807,29 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
 
       // Skip sleep for the last few tiles
       bool is_near_end = (xi + yi * xtiles) > (xtiles * ytiles - 5);
-      if (tile_sleep_ms > 0 && !is_near_end) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(tile_sleep_ms));
+      // SY --> Komiho Phase12: 与 process_gpu 同源的让出下限（连续模式 + 近期交互）。
+      const int64_t now_ms_staged = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count();
+      const bool recent_interaction_staged =
+          continuous_mode &&
+          (now_ms_staged - last_interaction_ms.load()) < recent_interaction_window_ms();
+      const int effective_sleep_staged =
+          tile_sleep_ms > 0
+              ? tile_sleep_ms
+              : (recent_interaction_staged ? scroll_yield_ms_for(0) : 0);
+      if (effective_sleep_staged > 0 && !is_near_end) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(effective_sleep_staged));
       }
+      // SY <--
     }
   }
 
   postprocess.wait();
+
+  if (guarded_texture_tiles > 0) {
+    LOGD("Periodic texture occupancy guard applied to %d/%d tiles",
+         guarded_texture_tiles, xtiles * ytiles);
+  }
 
   if (progress_ptr) {
     progress_ptr->store(100);

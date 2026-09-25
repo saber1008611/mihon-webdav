@@ -42,6 +42,15 @@ public:
   std::atomic<int> *ui_busy_ptr = nullptr;
   std::atomic<bool> *should_abort_ptr = nullptr;
   int tile_sleep_ms = 0; // Sleep between tiles for cooling (0 = full speed)
+  // SY --> Komiho Phase12: 连续滚动模式 GPU 交错让出。
+  // 连续（条漫）模式下，超分应在滑动期间持续工作（不能像翻页那样整段全停），
+  // 但又要「每块之间 sleep 让出 GPU」避免挤掉合成线程 → 卡顿。
+  // continuous_mode：Kotlin 按阅读模式设置（条漫=true）。
+  // last_interaction_ms：最近一次滑动/触摸的 steady_clock 毫秒戳，用于区分
+  //   「正在滑动」与「停下阅读」——仅近期有交互时才强制让出下限，停下后恢复全速追帧。
+  bool continuous_mode = false;
+  std::atomic<int64_t> last_interaction_ms{0};
+  // SY <--
   bool is_snapdragon = false;
   bool disable_grayscale_check = false;
   // SY --> Komiho Phase10: 单通道（luma-only）模型开关。
@@ -52,6 +61,12 @@ public:
   // waifu2x_fused_{pre,post}proc_luma.comp（全 GPU），staged 路径用
   // ncnn::resize_bicubic + 标量合成（CPU）。前者可用时优先生效。
   bool luma_model = false;
+  // SY <--
+  // SY --> 2026-09-25: 网点/周期纹理色块防护开关（来自上游 v1.3.10）。
+  // 开启后，process() 会对检测到大面积周期纹理（漫画网点纸）的 tile 做 3/4
+  // 缩采样 + 居中白边 + 重采样，规避超分模型在网点处产生的色块。仅对单色 +
+  // 网点密集的页触发；彩色页 / 普通线条稿不受影响。ACNet 与 Real-CUGAN 都开。
+  bool enable_periodic_texture_guard = false;
   // SY <--
   int num_threads = 1;
   int precision_mode = 0; // 0 = fp16, 1 = fp32, 2 = int8, 3 = bf16

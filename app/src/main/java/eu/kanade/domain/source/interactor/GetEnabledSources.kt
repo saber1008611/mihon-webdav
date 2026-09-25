@@ -10,6 +10,7 @@ import tachiyomi.domain.source.model.Pins
 import tachiyomi.domain.source.model.Source
 import tachiyomi.domain.source.repository.SourceRepository
 import tachiyomi.source.local.isLocal
+import eu.kanade.tachiyomi.source.webdav.WebDavSource
 
 @Inject
 class GetEnabledSources(
@@ -26,7 +27,9 @@ class GetEnabledSources(
             repository.getSources(),
         ) { pinnedSourceIds, enabledLanguages, disabledSources, lastUsedSource, sources ->
             sources
-                .filter { it.lang in enabledLanguages || it.isLocal() }
+                // SY --> WebDAV 云盘源始终启用（与 LocalSource 同待遇），不受语言开关影响。
+                .filter { it.lang in enabledLanguages || it.isLocal() || it.id == WebDavSource.ID }
+                // SY <--
                 .filterNot { it.id.toString() in disabledSources }
                 .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
                 .flatMap {
