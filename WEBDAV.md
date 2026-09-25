@@ -28,15 +28,15 @@
 ```
 
 - `目标目录` 的**直接子目录**即漫画文件夹（单层，不递归）。
-- 每个漫画文件夹内的 `*.cbz` 即章节；`cover.{jpg,jpeg,png,webp}` 作为封面。
+- 每个漫画文件夹内的章节支持 **10 种格式**：压缩包 `zip`/`cbz`/`rar`/`cbr`/`7z`/`cb7`/`tar`/`cbt`、电子书 `epub` 与 `pdf`；`cover.{jpg,jpeg,png,webp}` 作为封面。底层 `ArchiveReader` 基于 libarchive 原生解压，epub 走 `EpubReader`，pdf 走 `PdfPageLoader`（Android 内置 `PdfRenderer` 逐页渲染，**无第三方依赖、不增大 APK**）。
 
 ## 关键设计
 
 | 项 | 实现 |
 |---|---|
 | 列表浏览 | `listDirectories(config, destination)` 列直接子目录 → 每个子目录是一本书；**只列目录、不预拉封面**，几十上百本也不转圈 |
-| 章节列表 | `listFiles(config, manga.url)` 过滤 `.cbz`，用 `ChapterRecognition` 解析话数 |
-| 阅读 | `ChapterLoader` 在 `source is WebDavSource` 分支调用 `getArchiveFile()` 把 CBZ **流式下载到缓存**，再交给现成的 `ArchivePageLoader` 读页（翻页/封面/ComicInfo 全复用）；`getPageList()` 抛 `UnsupportedOperationException`（与 `LocalSource` 同一契约） |
+| 章节列表 | `listFiles(config, manga.url)` 过滤支持的章节格式（`isChapterFile`：zip/cbz/rar/cbr/7z/cb7/tar/cbt/epub/pdf），用 `ChapterRecognition` 解析话数 |
+| 阅读 | `ChapterLoader` 在 `source is WebDavSource` 分支调用 `getArchiveFile()` 把章节**流式下载到缓存**，再按扩展名交给现成的 `ArchivePageLoader`（压缩包）、`EpubPageLoader`（epub）或 `PdfPageLoader`（pdf）读页（翻页/封面/ComicInfo 全复用）；`getPageList()` 抛 `UnsupportedOperationException`（与 `LocalSource` 同一契约） |
 | 封面懒加载 | 列表项填 `content://eu.kanade.tachiyomi.webdav.cover/<编码路径>`（`WebDavCoverProvider`）。Coil 在网格项滚到可见时才各下载一次，天然懒加载、不阻塞列表；且走与上传同源、带鉴权的 `CloudSyncService`，绕开 Mihon 全局图片加载器对 WebDAV 鉴权的限制 |
 | 详情不污染 | `getMangaUpdate` **不改写** `thumbnail_url`：列表里填的 `content://` 直链在详情页同样由 `MangaCoverFetcher` 走 `Type.URI` 加载；若改成 `file://` 会被详情页 `upsert` 写进数据库，返回列表时污染封面 |
 | 排序/筛选 | 稳定单例 `sortFilter`（`Filter.Sort("排序", ["最近更新","名称"])`）。`热门/最新` tab 的 `GetRemoteManga` 不带 `filters` 参数，因此排序 Filter **必须返回稳定单例**，界面改 state 源内部才读得到。最新 tab 默认按目录修改时间倒序；`SManga` 在本 fork 无 `date_upload` 字段，故用内部 `WebDavMangaListItem(manga, lastModified)` 携带时间 |
@@ -54,7 +54,7 @@
 
 ## 协议与认证
 
-- 只读用到 `PROPFIND`（列目录、取 `getlastmodified` 用于排序）与 `GET`（下载 CBZ / 封面）。
+- 只读用到 `PROPFIND`（列目录、取 `getlastmodified` 用于排序）与 `GET`（下载章节归档 / 封面）。
 - 认证走 HTTP Basic（`okhttp3.Credentials`），由 `CloudSyncConfig(url, username, password)` 承载。
 - 时间字段解析 RFC1123（`parseLastModified`，失败回退 0）。
 

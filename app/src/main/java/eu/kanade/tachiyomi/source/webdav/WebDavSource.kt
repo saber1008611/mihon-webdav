@@ -180,7 +180,7 @@ class WebDavSource(
         val (config, _) = configOrNull() ?: return@withIOContext emptyList()
         runCatching {
             cloudSyncService.listFiles(config, manga.url)
-                .filter { it.name.endsWith(".cbz", ignoreCase = true) }
+                .filter { isChapterFile(it.name) }
                 .map { entry ->
                     SChapter.create().apply {
                         url = entry.path.trimStart('/')
@@ -203,8 +203,9 @@ class WebDavSource(
     override fun getFilterList(): FilterList = FilterList(sortFilter)
 
     /**
-     * 把某一章的 CBZ 流式下载到应用缓存目录，返回其 UniFile。
-     * ChapterLoader 拿到后直接用 ArchivePageLoader 读页，复用全部归档阅读逻辑。
+     * 把某一章的归档/电子书流式下载到应用缓存目录，返回其 UniFile。
+     * ChapterLoader 拿到后按扩展名选择 ArchivePageLoader（压缩包）或 EpubPageLoader（epub），
+     * 复用全部归档阅读逻辑。
      */
     suspend fun getArchiveFile(chapter: SChapter): UniFile = withIOContext {
         val (config, _) = configOrNull()
@@ -225,6 +226,20 @@ class WebDavSource(
         UniFile.fromFile(cacheFile)
             ?: throw IllegalStateException("WebDavSource: 无法把缓存文件包装为 UniFile")
     }
+
+    /**
+     * 判断远端文件名是否为支持的章节格式（共 10 种）。
+     * 与本地图源一致：压缩包 zip/cbz/rar/cbr/7z/cb7/tar/cbt（底层 libarchive 原生解压），
+     * 外加 epub 电子书（EpubReader）与 pdf（Android 内置 PdfRenderer 逐页渲染）。
+     */
+    private fun isChapterFile(name: String): Boolean {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return ext in SUPPORTED_CHAPTER_EXTENSIONS
+    }
+
+    private val SUPPORTED_CHAPTER_EXTENSIONS = setOf(
+        "zip", "cbz", "rar", "cbr", "7z", "cb7", "tar", "cbt", "epub", "pdf",
+    )
 
     /**
      * 生成封面 content:// 直链（WebDavCoverProvider）。Coil 加载该 URI 时在可见项

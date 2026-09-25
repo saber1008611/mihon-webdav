@@ -298,7 +298,10 @@ class LocalSource(
         val chapters = fileSystem.getFilesInMangaDirectory(manga.url)
             // Only keep supported formats
             .filterNot { it.name.orEmpty().startsWith('.') }
-            .filter { it.isDirectory || Archive.isSupported(it) || it.extension.equals("epub", true) }
+            .filter {
+                it.isDirectory || Archive.isSupported(it) ||
+                    it.extension.equals("epub", true) || it.extension.equals("pdf", true)
+            }
             .map { chapterFile ->
                 SChapter.create().apply {
                     url = "${manga.url}/${chapterFile.name}"
@@ -393,6 +396,10 @@ class LocalSource(
                         entry?.let { coverManager.update(manga, epub.getInputStream(it)!!) }
                     }
                 }
+                // SY --> PDF 没有可直接取出的内嵌封面图（要封面得先渲染首页），这里返回 null：
+                // 该漫画在书架里没有缩略图，但不影响阅读。避免为取封面额外拉起一次渲染器。
+                is Format.Pdf -> null
+                // SY <--
             }
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e) { "Error updating cover for ${manga.title}" }

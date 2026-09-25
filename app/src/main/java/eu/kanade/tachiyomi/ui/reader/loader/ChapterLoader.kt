@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import mihon.core.archive.archiveReader
 import mihon.core.archive.epubReader
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
@@ -100,11 +101,19 @@ class ChapterLoader(
                     is Format.Directory -> DirectoryPageLoader(format.file)
                     is Format.Archive -> ArchivePageLoader(format.file.archiveReader(context))
                     is Format.Epub -> EpubPageLoader(format.file.epubReader(context))
+                    // SY --> PDF：Android 内置 PdfRenderer 逐页渲染，无第三方依赖。
+                    is Format.Pdf -> PdfPageLoader(format.file)
+                    // SY <--
                 }
             }
-            // SY --> 路线 A 方案 1：先把 CBZ 流式下载到缓存，再用现成归档阅读器读页。
+            // SY --> 路线 A 方案 1：先把章节归档/电子书流式下载到缓存，再用现成阅读器读页。
+            // 压缩包走 ArchivePageLoader（libarchive），epub 走 EpubPageLoader（专门解析 OPF）。
             source is WebDavSource -> source.getArchiveFile(chapter.chapter).let { file ->
-                ArchivePageLoader(file.archiveReader(context))
+                when (file.extension?.lowercase()) {
+                    "epub" -> EpubPageLoader(file.epubReader(context))
+                    "pdf" -> PdfPageLoader(file)
+                    else -> ArchivePageLoader(file.archiveReader(context))
+                }
             }
             // SY <--
             source is HttpSource -> HttpPageLoader(chapter, source, chapterCache)
