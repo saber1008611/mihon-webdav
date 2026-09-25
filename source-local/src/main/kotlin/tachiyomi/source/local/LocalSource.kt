@@ -235,11 +235,18 @@ class LocalSource(
     }
 
     private fun <T> getComicInfoForChapter(chapter: UniFile, block: (InputStream) -> T): T? {
-        return if (chapter.isDirectory) {
-            chapter.findFile(COMIC_INFO_FILE)?.openInputStream()?.use(block)
-        } else {
-            chapter.archiveReader(context).use { reader ->
-                reader.getInputStream(COMIC_INFO_FILE)?.use(block)
+        return when {
+            chapter.isDirectory -> {
+                chapter.findFile(COMIC_INFO_FILE)?.openInputStream()?.use(block)
+            }
+            // SY --> PDF 不是压缩包容器，libarchive 打开会抛 ArchiveException 并连累整个
+            // 章节列表（表现为详情页「共 0 章」+ toast）。PDF 没有 ComicInfo.xml，直接跳过。
+            chapter.extension.equals("pdf", true) -> null
+            // SY <--
+            else -> {
+                chapter.archiveReader(context).use { reader ->
+                    reader.getInputStream(COMIC_INFO_FILE)?.use(block)
+                }
             }
         }
     }
