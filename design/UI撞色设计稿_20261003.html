@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="TMbHgHyQPx7FiDK9pQ6HWq">
+<head data-page-node-id="UbhCkE1Lzx7Sghc98e9iPU">
+<meta charset="utf-8" data-page-node-id="ZM6LFY9jGvkoX1xoTvP1cl">
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="ebBugsHxfwPD9A1t6WTo6z">
+<title>MIhonW 灰调 L 型外框设计稿 · 2026-10-03</title>
+<style>
+  :root{
+    --ink:#17181C; --ink2:#5A5C63; --ink3:#8E9098;
+    --line:#E2E2E6; --page:#F2F2F4;
+    --bar:#D8D8D8;      /* 页底 / 顶栏 / 侧栏 / 底栏 */
+    --surface:#FBFBFB;  /* 内容块 */
+    --chip:#E9E9E9;     /* 侧栏未选中方片 / 搜索胶囊 */
+    --csel:#C4C4C4;     /* 侧栏选中方片 */
+    --t1:#1B1B1B; --t2:#4A4A4A; --sep:#BDBDBD;
+    --r:9px;            /* 内容块圆角 */
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 24px 64px;background:var(--page);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.7}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:22px;font-weight:600;margin:0 0 6px}
+  h2{font-size:16px;font-weight:600;margin:44px 0 10px;padding-top:22px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0;padding-top:0}
+  h3{font-size:14px;font-weight:600;margin:26px 0 10px}
+  .sub{color:var(--ink2);margin:0 0 6px}
+  .grid{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+  .cap{font-size:13px;font-weight:500;margin-bottom:10px;color:var(--ink2)}
+  .cap.on{color:#0058CA}
+
+  /* ---------- 平板：L 型 ---------- */
+  .tablet{position:relative;width:540px;height:470px;background:var(--bar);border:1px solid #CFCFD2;border-radius:12px;overflow:hidden}
+  .tbody{position:absolute;left:0;right:70px;top:64px;bottom:0;background:var(--surface);
+    border-top-right-radius:var(--r);padding:14px;
+    display:grid;grid-template-columns:repeat(4,1fr);gap:11px;align-content:start}
+  .cd{border:1px solid #E9E9ED;border-radius:9px;overflow:hidden;background:#fff}
+  .cv{aspect-ratio:1/1.15;background:#EDEFF3}
+  .tbar{position:absolute;left:0;right:0;top:0;height:64px;display:flex;align-items:center;gap:12px;padding:0 20px}
+  .tbar .title{font-size:17px;font-weight:600;color:#0F0F10}
+  .tbar .grow{flex:1}
+  .sbox{height:34px;border-radius:17px;background:var(--chip);color:#5A5A5A;display:flex;align-items:center;padding:0 15px;font-size:13px;min-width:150px}
+  .rail{position:absolute;top:0;right:0;bottom:0;width:70px;display:flex;flex-direction:column;align-items:center;padding:72px 0 12px;justify-content:space-between}
+  .item{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10px;color:var(--t2)}
+  .item.sel{color:#000}
+  .sq{width:48px;height:48px;border-radius:14px;background:var(--chip);display:flex;align-items:center;justify-content:center}
+  .sq.sel{background:var(--csel)}
+  .sq svg{width:25px;height:25px;stroke:var(--t2);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .sq.sel svg{stroke:#000}
+  .vsep{width:34px;height:1px;background:var(--sep);margin:2px 0}
+  .tcol{display:flex;flex-direction:column;align-items:center;gap:9px}
+
+  /* ---------- 手机 ---------- */
+  .phone{position:relative;width:250px;height:488px;border-radius:26px;border:1px solid #CFCFD2;overflow:hidden;background:var(--bar)}
+  .status{height:22px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:10px;color:#1F1F23}
+  .pbar{height:52px;display:flex;align-items:center;gap:10px;padding:0 15px}
+  .pbar .title{font-size:17px;font-weight:600;color:#0F0F10}
+  .pbar .grow{flex:1}
+  .ppill{height:30px;border-radius:15px;background:var(--chip);color:#5A5A5A;display:flex;align-items:center;padding:0 13px;font-size:12px}
+  .pcard{position:absolute;left:0;right:0;top:74px;bottom:76px;background:var(--surface);border-radius:var(--r);overflow:hidden}
+  .prow{display:flex;gap:10px;align-items:center;padding:8px 12px}
+  .pcov{width:34px;height:46px;border-radius:6px;flex:none}
+  .lines{flex:1;display:flex;flex-direction:column;gap:5px}
+  .ln{height:7px;border-radius:3px;background:#E9E9ED}
+  .pnav{position:absolute;left:0;right:0;bottom:0;height:76px;display:flex;align-items:center;justify-content:space-around;padding-top:10px}
+  .nitem{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px}
+  .nd{width:42px;height:21px;border-radius:11px}
+  .nq{width:17px;height:17px;border-radius:5px}
+
+  .tile{position:relative;width:118px;height:118px;background:var(--bar);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .tile .c{position:absolute;background:var(--surface)}
+  .lbl{font-size:11px;color:var(--ink3);text-align:center;margin-top:7px}
+
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#E9E9EC;font-weight:600}
+  code{background:#EFF0F3;border-radius:4px;padding:1px 5px;font-size:12px;font-family:ui-monospace,Consolas,monospace}
+  .sw{display:inline-block;width:15px;height:15px;border-radius:4px;border:1px solid rgba(0,0,0,.15);vertical-align:-2px;margin-right:6px}
+</style>
+</head>
+<body data-page-node-id="8FMTqzap9TuOu60vVBAYis">
+<div class="wrap" data-page-node-id="NvU1SXTx1SIsGOhOyE8s3Y">
+
+  <h1 data-page-node-id="mGLFpOT9cn71zp3ltggo4b">MIhonW 灰调 L 型外框设计稿</h1>
+  <p class="sub" data-page-node-id="pYvBvnBZ8spq8DndWpiUnp">2026-10-03 · 灰 <code data-page-node-id="zWmaRNMRGXCF8SVCSjhFHM">#D8D8D8</code> · 平板 L 型内拐角圆角 · 手机内容块四角圆角 · 侧栏 +2dp · 底栏 −2dp</p>
+
+  <h2 data-page-node-id="j8KcoqbWL2YAL4GW8b1kQK">平板 · L 型</h2>
+  <div class="grid" data-page-node-id="yDovrnY33FuQhn1EZonufl">
+    <div data-page-node-id="A6b4c0yYTeJSnPulnIH6bq">
+      <div class="tablet" data-page-node-id="8sngbH4PUm0toOqAdQwfXm">
+        <div class="tbody" data-page-node-id="9mAV08cZHuxbXuE2podXmK">
+          <div class="cd" data-page-node-id="WVjRZlwxKjc7BZN4AfqgnI"><div class="cv" data-page-node-id="0An3S4PJlvvIHyvL2Erodp"></div></div><div class="cd" data-page-node-id="DQ5VnVZuxHWuOHBarYXeDu"><div class="cv" data-page-node-id="VTdrRS8nMAlVAn7HaY0d9i"></div></div>
+          <div class="cd" data-page-node-id="QmAjY2JVQprFyMW8gAkdDU"><div class="cv" data-page-node-id="byILH8Epg5LE3MS4FyFD7m"></div></div><div class="cd" data-page-node-id="UvGT6F2Al9Icf3VzIJxLEe"><div class="cv" data-page-node-id="AUql92FAtlG341os8ywqKd"></div></div>
+          <div class="cd" data-page-node-id="rx9FAGLJYj8J43VHMGZGFC"><div class="cv" data-page-node-id="eaCFCmFVUyQBejHbOaRZpb"></div></div><div class="cd" data-page-node-id="OBhoTquETEzYxyKrNdqsg2"><div class="cv" data-page-node-id="HAC3D0keyAPCAGuevPuSP7"></div></div>
+          <div class="cd" data-page-node-id="ZQ77iaqgiHT7AWFeC150GF"><div class="cv" data-page-node-id="CLtVaj8CHEPOyW1BodhhFQ"></div></div><div class="cd" data-page-node-id="SMX2HDtsWebvtYuUe6BGV0"><div class="cv" data-page-node-id="tM0lKCvGEplx3YFgLYoCFB"></div></div>
+          <div class="cd" data-page-node-id="UUECMUtgUW5STKRZkdVJ5H"><div class="cv" data-page-node-id="HJNYo244YFT3iPVkJVYYGJ"></div></div><div class="cd" data-page-node-id="rM86JRU06uAG3zmdmDxIzx"><div class="cv" data-page-node-id="FaJN0KM3yTAGbxxxaeyH2h"></div></div>
+        </div>
+        <div class="tbar" data-page-node-id="08o1rAznQGsDqaso831VMv"><span class="title" data-page-node-id="mjynRWFue4YjVCyB5nrdJH">书库文件夹</span><span class="grow" data-page-node-id="N5s9XojlnETpqmEAsm7Lvx"></span><span class="sbox" data-page-node-id="qpFH0aMmIuM42RArERXqd9">筛选　搜索</span></div>
+        <div class="rail" data-page-node-id="IVD0PvktiHd181fe5Hlian">
+          <div class="tcol" data-page-node-id="BA5ZxwQ6ap9D7NiCQqnjDf">
+            <div class="item sel" data-page-node-id="YQt0tw0KFI2rm5f7xJwYrt"><div class="sq sel" data-page-node-id="yiYEyKHIVSnrtPluFMXzQ9"><svg viewBox="0 0 24 24" data-page-node-id="gubsavSzxX7iOXdpkof4HF"><path d="M4 5h5v14H4zM11 5h5v14h-5z" data-page-node-id="ZDo5b573urzqAob8cGCNtc"/></svg></div>书架</div>
+            <div class="item" data-page-node-id="ZjLylq4wBjV7OCSqBuaNeP"><div class="sq" data-page-node-id="W3V1V0csJPF41nwzGrppcN"><svg viewBox="0 0 24 24" data-page-node-id="rRArMFWe7pQDTLMdbCdK6f"><path d="M12 4v10M8 11l4 4 4-4M5 19h14" data-page-node-id="d07i3fbudQ2URZE58p3VBk"/></svg></div>更新</div>
+            <div class="item" data-page-node-id="bHUqoDqrbq6M1j54vvMrFj"><div class="sq" data-page-node-id="mVS99eT97mB65pg9JkxcXn"><svg viewBox="0 0 24 24" data-page-node-id="mV01fSzTMhEDyzsbETVkZ4"><circle cx="12" cy="12" r="8" data-page-node-id="NX9gbvm9ikEAa0G7GYTsCO"/><path d="M12 8v4.5l3 2" data-page-node-id="kKN1nSqt2Q3lT9Y4FZje2h"/></svg></div>历史</div>
+            <div class="item" data-page-node-id="sOylMKAeBcEYIwMuMUujiL"><div class="sq" data-page-node-id="YKi5v8XuADwsga3I0gz1Vx"><svg viewBox="0 0 24 24" data-page-node-id="Lhko8x3nCAoWDVONc2H4Ln"><circle cx="12" cy="12" r="8" data-page-node-id="TaQrPd6U4BA8VhCl5QgStI"/><path d="M15 9l-4.5 2L9 15l4.5-2z" data-page-node-id="ISNWzpvLTz0B7ZlV30qinK"/></svg></div>浏览</div>
+          </div>
+          <div class="tcol" data-page-node-id="BaC1vyNZdC2RfLD8sO9MdH">
+            <div class="vsep" data-page-node-id="B9M8532S4BxH4sjc5ccxcG"></div>
+            <div class="item" data-page-node-id="DrG5v59wBmS2FCWZlsvCrY"><div class="sq" data-page-node-id="DtF65kjwqzVw2pHBIomyjG"><svg viewBox="0 0 24 24" data-page-node-id="RirXQGBnkHrxACVETYPtyD"><circle cx="12" cy="12" r="3" data-page-node-id="sv67DQhav0uBP8NpkDU5WN"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4" data-page-node-id="PuYVzSO4XLeH0LZoQB54Xr"/></svg></div>设置</div>
+            <div class="item" data-page-node-id="JclfVzNroLysxd3ziYBKWG"><div class="sq" data-page-node-id="vDHQ2GEGx7Z3aA3zvwGNh8"><svg viewBox="0 0 24 24" data-page-node-id="1GCAj4DCNI6qXDHWFGImFz"><circle cx="12" cy="12" r="8" data-page-node-id="EzmERD8R55vhsuRX2jELTP"/><path d="M12 11v5M12 8h.01" data-page-node-id="90xuix6nJwAFn9LFx7ONR4"/></svg></div>关于</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div data-page-node-id="kNAbNAPxqJcBBWWqjA8pEM">
+      <div class="cap" data-page-node-id="JiYvN0Cfk2s6Gf8ASB580v">内拐角 · 5 倍放大</div>
+      <div class="tile" style="width:200px;height:200px" data-page-node-id="cZOsAUPj4FStStBqSsVosB">
+        <div style="position:absolute;left:0;top:0;right:0;height:92px;background:var(--bar)" data-page-node-id="nBOlyuoyTfi7Hv9WSPdWbD"></div>
+        <div style="position:absolute;top:0;right:0;bottom:0;width:92px;background:var(--bar)" data-page-node-id="QToqVcZcM03WwF9SUTjBzM"></div>
+        <div class="c" style="left:0;top:92px;right:92px;bottom:0;border-top-right-radius:45px" data-page-node-id="ClaEZG9U3tYATeOmoCIDiX"></div>
+      </div>
+      <div style="font-size:12px;color:var(--ink2);line-height:1.9;margin-top:14px;width:200px" data-page-node-id="y66GTrnNCWj5K00zcPEP7a">
+        只有<b data-page-node-id="bWyFCPJHEmxdEDZxCto3U0">这一个角</b>圆角，<b data-page-node-id="rG3xpjjOFAGtoLaEkfh5OG">R9</b><br data-page-node-id="Lfyg7AjdcGxDrRBB8bswAG">
+        顶栏、侧栏都不单独圆角
+      </div>
+    </div>
+
+    <div style="width:215px" data-page-node-id="JoghG1j9eQ62WkMi2oug5I">
+      <div class="cap" data-page-node-id="e6glzKxEZOaicBAzb29NMX">取值</div>
+      <div style="font-size:12px;line-height:1.9" data-page-node-id="Rt9KrHQpbsJ8toDavtW1Ph">
+        <div data-page-node-id="2LkWwvZxOBfyUt4oQn16bo"><span class="sw" style="background:#D8D8D8" data-page-node-id="dAhYDtKAOHWUg8dLblCvI0"></span>页底 / 顶栏 / 侧栏 <code data-page-node-id="VAB6h5QjNWRP3dEAGYplCu">#D8D8D8</code></div>
+        <div data-page-node-id="kNXI7cCWBWLqDpFhJVc8Si"><span class="sw" style="background:#FBFBFB" data-page-node-id="PeCMPyw8Q8nwfTnEUQeLra"></span>内容块 <code data-page-node-id="LPW9NbzCBFcZs1DbtU7ngF">#FBFBFB</code></div>
+        <div data-page-node-id="Lf5BpalGEm7ueti6tNUAIJ"><span class="sw" style="background:#E9E9E9" data-page-node-id="QLweEoFJICiYSmtgtEKzlb"></span>方片 · 搜索胶囊 <code data-page-node-id="SjCtWy9uEP7VZlnpBYBOXI">#E9E9E9</code></div>
+        <div data-page-node-id="C2vqAWGsxzAgtuVHtQgQjr"><span class="sw" style="background:#C4C4C4" data-page-node-id="jGQfmYQ64KciP4jBDY5b4H"></span>选中方片 <code data-page-node-id="vPqiii6qu1zJHvaYgFDkHi">#C4C4C4</code></div>
+        <div data-page-node-id="O0HxHq9x5luRQQK37UlFMH"><span class="sw" style="background:#000" data-page-node-id="Hi9s9iibOtPsr031DvuQGc"></span>选中图标 <code data-page-node-id="qiaAiv2ZQwrgYHelb3Furf">#000000</code></div>
+      </div>
+      <div style="font-size:12px;color:var(--ink2);line-height:1.9;margin-top:16px" data-page-node-id="6XgYwzOIgB5hwtxWtSXHsa">
+        侧栏宽 <b data-page-node-id="z2GfC7MdpT7EgpkdaW7XuT">40 → 42dp</b>（+2）<br data-page-node-id="7vkVFnqSekv5iKjfPS7AJF">
+        方片 <b data-page-node-id="crbCIzTrz8Oq4UKwUN3i9i">29×29dp</b>，圆角 9dp<br data-page-node-id="PmL2aZDIpmaG8vjZrdEiDi">
+        图标 16dp，标签 10sp<br data-page-node-id="opC95nt3HmM03IhOebXHsS">
+        分割线 22dp × 1dp<br data-page-node-id="eyZhhpNc3QHrhQRs893nKT">
+        顶栏 <b data-page-node-id="KHVA9TOiDiMC4H6u5Rfzds">64dp</b><br data-page-node-id="LC9PeJuAIhyJCKVBYaAogg">
+        内拐角圆角 <b data-page-node-id="o3pkjPiBLI4Qf6hqn1BHHG">R9</b>
+      </div>
+    </div>
+  </div>
+
+  <h3 data-page-node-id="FAQRvycKieFCbah9MNPT14">侧栏三个状态</h3>
+  <div class="grid" style="gap:34px" data-page-node-id="CAojXURBGvq6SZ0QMF4eFB">
+    <div data-page-node-id="jouCBthAhFgNnYAlfxq6FT">
+      <div class="cap" data-page-node-id="agF9OPEmPJCFIn7YUpXZ8S">未选中</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:2px;width:70px;background:var(--bar);padding:12px 0" data-page-node-id="Ntrf3bXIlRFaI4I68DrpqJ">
+        <div class="sq" data-page-node-id="L2ccFOZ23URGBjp0Iy55vw"><svg viewBox="0 0 24 24" style="width:25px;height:25px;stroke:#4A4A4A;fill:none;stroke-width:2;stroke-linecap:round" data-page-node-id="LjAPog6l9NnSUqD99f1AUu"><circle cx="12" cy="12" r="8" data-page-node-id="KJXbRSQ2q0BCIUxdodJGM5"/><path d="M12 8v4.5l3 2" data-page-node-id="AFbxPVkXj7nFnEabbGGQix"/></svg></div>
+        <span style="font-size:10px;color:#4A4A4A" data-page-node-id="IExZsZetWsHnzDWBaGQCh3">历史</span>
+      </div>
+    </div>
+    <div data-page-node-id="ZD7AQJABWtNFqikCc24uyc">
+      <div class="cap" data-page-node-id="pGW3tlZETvgf4H7MMCY92D">选中</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:2px;width:70px;background:var(--bar);padding:12px 0" data-page-node-id="HGtJAfZGn6i2XwM5vEYrKK">
+        <div class="sq sel" data-page-node-id="d7dQ1rmW6jZnrzjZZagBtY"><svg viewBox="0 0 24 24" style="width:25px;height:25px;stroke:#000;fill:none;stroke-width:2;stroke-linecap:round" data-page-node-id="FSBQVIcoOf94pTiNqPVC6T"><path d="M4 5h5v14H4zM11 5h5v14h-5z" data-page-node-id="UJtykrtQ4p0kVGfUqqLsIx"/></svg></div>
+        <span style="font-size:10px;color:#000" data-page-node-id="w1CqM05U1MhCDO9iSocWuC">书架</span>
+      </div>
+    </div>
+    <div data-page-node-id="xPz0mlPLmCHUZVkUvV03Th">
+      <div class="cap" data-page-node-id="UH3WG1HIDvcHDjMIo3JKeI">分组分割线</div>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;width:70px;height:100px;background:var(--bar)" data-page-node-id="HwMAhKtyrKsyA5FOqjoJTH">
+        <div class="sq" style="width:48px;height:32px" data-page-node-id="pVwf14ZTSC1cToBSpKnHsV"></div>
+        <div class="vsep" data-page-node-id="ztY2sOWANxgtnugUY2N9Ps"></div>
+        <div class="sq" style="width:48px;height:32px" data-page-node-id="EdMeBft4n3SfhObxCEvV2k"></div>
+      </div>
+    </div>
+  </div>
+
+  <h2 data-page-node-id="EH2DiimSa92je3Mju5afEC">手机 · 内容块四角圆角</h2>
+  <div class="grid" data-page-node-id="sqUDDANBmUbQHP0FCxQbcI">
+    <div data-page-node-id="CIK1fGZQcJw7wqvqcoz91H">
+      <div class="phone" data-page-node-id="CJWytHuiU8e9yqWDM0Yx7I">
+        <div class="status" data-page-node-id="DUNaASlhpJguTxzxVsmWsO"><span data-page-node-id="1PjkmylKcBxZDV60kTDSE7">02:59</span><span data-page-node-id="rsdeyg2JES3HFYdXm3Acnt">3126</span></div>
+        <div class="pbar" data-page-node-id="cI3vLcrSK6KWaEvdbIBoX6"><span class="title" data-page-node-id="V5DtyVKordUeayurGZFSf8">书架</span><span class="grow" data-page-node-id="tIHkWiJrdyJuZrIxLCs5Z4"></span><span class="ppill" data-page-node-id="G6k5x0hYni381xrTrGaXAt">搜索</span></div>
+        <div class="pcard" data-page-node-id="cu2AasHTsXCs88U6HDgFA5">
+          <div class="prow" data-page-node-id="mYsXxPEGsMZpfkdAImSp3f"><div class="pcov" style="background:#C9D6E8" data-page-node-id="DsAjys8NNoHqHpoRvlCg6y"></div><div class="lines" data-page-node-id="KryJ4N3t9TBNR8hh6Hz5tv"><div class="ln" style="width:70%" data-page-node-id="Qm38Y70PfslJPQfcJwiom0"></div><div class="ln" style="width:45%;background:#F1F1F5" data-page-node-id="twcWnalFbESrQuVKOX2DWn"></div></div></div>
+          <div class="prow" data-page-node-id="f48f48LAG1xdPWKMsPoPOJ"><div class="pcov" style="background:#E2CDD6" data-page-node-id="6ZfG5sMxXkk4tabOS2u91Z"></div><div class="lines" data-page-node-id="jjTRpVdkg5mBJpgA1LTd1T"><div class="ln" style="width:62%" data-page-node-id="boja5IrvKH349AlSnbS5aJ"></div><div class="ln" style="width:38%;background:#F1F1F5" data-page-node-id="3qFjNYHDEfl09VrGM4kUb7"></div></div></div>
+          <div class="prow" data-page-node-id="Ojpb0JzeM2G0INTxPpL9xT"><div class="pcov" style="background:#CFE0D2" data-page-node-id="6ScvHQ2ly2bTcHDY3XvSNM"></div><div class="lines" data-page-node-id="1lXucmK8WxZTR45dMpCDeZ"><div class="ln" style="width:74%" data-page-node-id="p8NZh3M8y1l1mkahQsBO86"></div><div class="ln" style="width:40%;background:#F1F1F5" data-page-node-id="lsgWWgzRgoCU6Gm4is53yL"></div></div></div>
+          <div class="prow" data-page-node-id="RcGHQKbkp9SPagwB4BCgA9"><div class="pcov" style="background:#E0D5C4" data-page-node-id="GyTNvOMQYiHsKIaFBnVcGC"></div><div class="lines" data-page-node-id="tdBdbo4y3QIK0tOX3HlmHn"><div class="ln" style="width:66%" data-page-node-id="EXlpCbtltoCcKhfvcHpMgV"></div><div class="ln" style="width:42%;background:#F1F1F5" data-page-node-id="4SuBp8BPpeaQtESQGakW7h"></div></div></div>
+        </div>
+        <div class="pnav" data-page-node-id="F5vS6pZmAi2pLYAAbocpQN">
+          <div class="nitem" style="color:#000" data-page-node-id="hRgcshs14tYxONFrG0Dhwn"><div class="nd" style="background:var(--csel)" data-page-node-id="RVJvFdXMr2wCkZqi2Lqgfk"></div>书架</div>
+          <div class="nitem" style="color:#4A4A4A" data-page-node-id="iUNDmclfu9v6lo318SNf1l"><div class="nq" style="background:var(--chip)" data-page-node-id="uecPyrcfUc4qF5WAGZHXNH"></div>更新</div>
+          <div class="nitem" style="color:#4A4A4A" data-page-node-id="nmCmlH09UenSh9Nf14S4PP"><div class="nq" style="background:var(--chip)" data-page-node-id="zqk3MGyfrJaT33ZaySnYUL"></div>历史</div>
+          <div class="nitem" style="color:#4A4A4A" data-page-node-id="Gjwv9PBX1Q9qV3S6AdmMTc"><div class="nq" style="background:var(--chip)" data-page-node-id="qG5vEtiWgI2a8FS3FC7S17"></div>浏览</div>
+          <div class="nitem" style="color:#4A4A4A" data-page-node-id="20O84SL0AzaBz22jMKdgu7"><div class="nq" style="background:var(--chip)" data-page-node-id="oXUKYTFswMTPMNUIErvCPG"></div>更多</div>
+        </div>
+      </div>
+    </div>
+
+    <div data-page-node-id="qbFJ5bT6qr6DDqFhoQIMLG">
+      <div class="cap" data-page-node-id="sit3QOvf0joXqLpzplCVIr">四个角 · 5 倍放大</div>
+      <div style="display:flex;gap:14px" data-page-node-id="qFBymALPAP4fc6j7iTW4w1">
+        <div data-page-node-id="ypCYLIBkxpRvjYT1TUymqi">
+          <div class="tile" data-page-node-id="P7Sjc7Dic8M7CDelAEKFoq"><div class="c" style="left:-30px;top:30px;right:30px;bottom:-30px;border-top-left-radius:30px" data-page-node-id="GZ2OFiEeb9RxHu8XM8882R"></div></div>
+          <div class="lbl" data-page-node-id="l7EPCwOfmHULaN7AdULoDh">左上</div>
+        </div>
+        <div data-page-node-id="XNG9VcgyJtNflSgPYWcOyN">
+          <div class="tile" data-page-node-id="ukU6BdGmXnhHvhiLp6KdyY"><div class="c" style="right:-30px;top:30px;left:30px;bottom:-30px;border-top-right-radius:30px" data-page-node-id="FBURV0ipZQs4eBsn9DBnN3"></div></div>
+          <div class="lbl" data-page-node-id="uwfouPfxENBhVohArZH6I8">右上</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:14px;margin-top:14px" data-page-node-id="zQgZTDNjRfawlbHLmmFcpV">
+        <div data-page-node-id="Xol2EGjc3jHagAUoMqfAZT">
+          <div class="tile" data-page-node-id="6iEI1aWhGlkhvQnjH6hLCE"><div class="c" style="left:-30px;bottom:30px;right:30px;top:-30px;border-bottom-left-radius:30px" data-page-node-id="KTB2wj6cLGEmRQvMJNo4aX"></div></div>
+          <div class="lbl" data-page-node-id="KoW7wApYo2QhSw9ZAZodW8">左下</div>
+        </div>
+        <div data-page-node-id="uh6Ppg3mK6GprCj5c6fIwT">
+          <div class="tile" data-page-node-id="HShrobXWVBsVrslozmmY2I"><div class="c" style="right:-30px;bottom:30px;left:30px;top:-30px;border-bottom-right-radius:30px" data-page-node-id="i2wkupmsp49yDIkLvItjFN"></div></div>
+          <div class="lbl" data-page-node-id="T9dBgrLsTB8aUI4UHtptvP">右下</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--ink2);line-height:1.9;margin-top:16px;width:250px" data-page-node-id="3A4MEihuhcqKt0EimBvyB0">
+        四个角<b data-page-node-id="807V3dD0E7dzMLgEn98Psv">同一弧度 R9</b><br data-page-node-id="EOwBe3fBkbJ8AH9pR5eFEi">
+        上方两角贴顶栏，下方两角贴底栏<br data-page-node-id="Gj8HCojOUwPHWqpr40SRK7">
+        内容块左右贴屏边
+      </div>
+    </div>
+
+    <div style="width:225px" data-page-node-id="VyaM8kDGYMzh4VSwf28Iec">
+      <div class="cap" data-page-node-id="PEo1ODEVdOu2V5CskaYrjz">取值</div>
+      <div style="font-size:12px;color:var(--ink2);line-height:1.9" data-page-node-id="SizkSpeipfRNQe6Nk4cxEJ">
+        顶部栏 <b data-page-node-id="TaqPCvHsPHbFhRaD3qNnUt">64dp</b>（−2）<br data-page-node-id="cwGRzwwwEfFHeo9jp5Dknf">
+        底部栏 <b data-page-node-id="t9R3W4WK2CuzJsHdtx1AAH">80 → 76dp</b>（−2）<br data-page-node-id="ASUjiSvL9DakyZlZfDdUK9">
+        内容块圆角 <b data-page-node-id="Wi9GuskliXolFdPZj58cA4">R9</b>，四角一致<br data-page-node-id="9kIu2CfHeU8EFonEfZVKaI">
+        内容块<b data-page-node-id="AwoXRdMQcORgOArueFUm4u">左右不留边</b><br data-page-node-id="D5kSTpk59jgQxyWzPD0ZmC">
+        顶栏 / 底栏与页底<b data-page-node-id="vQUE5cGZYmGyQp06BwH6zU">同色</b>，不单独圆角<br data-page-node-id="ZD8Qln9KlJrpGiMkxuLOeD">
+        搜索胶囊 <code data-page-node-id="3nL8MCpFsUDyqhrJiIeWdJ">#E9E9E9</code>
+      </div>
+    </div>
+  </div>
+
+  <h2 data-page-node-id="wqXruQhBQ4pExlYPlmkxTn">实现规格</h2>
+  <table style="margin-top:6px" data-page-node-id="WoP7MSmDd53sSmF6kGB1l3">
+    <tr data-page-node-id="hBL3C2jh7ZtCb6nD3Y46Ju"><th style="width:150px" data-page-node-id="0S5y6fiTG8lJq1fSnYqZ2J">项目</th><th style="width:185px" data-page-node-id="p9drxPEexTbjtCWLcmgEw0">现状</th><th data-page-node-id="oSGrMyW5pUQafizme57O6j">改后</th></tr>
+    <tr data-page-node-id="XNimITcCCPJFRfuVHTJFpw"><td data-page-node-id="xfqs77EqfhBHE7gUQw5zTF">页底 / 顶栏 / 侧栏 / 底栏</td><td data-page-node-id="ka7vDMFAljK8HO90O3RLtf">近白 / 各自取色</td><td data-page-node-id="dRKKFWSOLp8QnhRVuQYOvO">统一 <b data-page-node-id="D7oUA8LVsZ9S9zYkr68Ug3">#D8D8D8</b></td></tr>
+    <tr data-page-node-id="YnkjTKAOaAtDgKqi1Xuh0A"><td data-page-node-id="T6lO4kKDSZXzOQ0PgG3CbX">平板结构</td><td data-page-node-id="CPMdRnAdtsEfcpAXcaB2eD">顶栏 + 内容 + 侧栏</td><td data-page-node-id="JiVjOrmAyeKaNyQ1UkprAG"><b data-page-node-id="Y7vL5RQw3fXErUt9siULYz">L 型</b>：顶栏通栏 + 右侧栏通到底，内容块贴左/下屏边、被顶栏与侧栏挤开</td></tr>
+    <tr data-page-node-id="jbVxBJ0fyXkV4lBldjxCFN"><td data-page-node-id="9uPMsc0xMLiEpr9GdTW6db">平板内容块圆角</td><td data-page-node-id="qUeaqZVWb5G4uedm4Vhsmh">—</td><td data-page-node-id="Na1FYw2fPPKGnqYsDQEx04"><b data-page-node-id="AEt4FhLGM0nlLI9QyGzlhu">仅内拐角（右上）R9</b></td></tr>
+    <tr data-page-node-id="zolXJOpZe6WHua9uhR9vek"><td data-page-node-id="Yt4fthNLrzXtRNPG7ep1fD">平板侧栏宽度</td><td data-page-node-id="IBdPVd1Ormifmsxpcf5a9k">≈40dp（内容撑开）</td><td data-page-node-id="6DU5EJbLg9MAKxSvSEZUUu"><b data-page-node-id="mUSMSvcUOKLuJpqZ4ZcqgP">42dp</b> 固定（+2）</td></tr>
+    <tr data-page-node-id="3FzC3cmLMrKOS5EYTVAGCm"><td data-page-node-id="qGXoBOazehqdyAjXjG5Nv8">侧栏方片</td><td data-page-node-id="2KT9KhuD6oj124J5qaGyXH">无容器</td><td data-page-node-id="7Y9eYiR0EVU9zi5PAQOp2f">29×29dp，圆角 9dp；未选 <b data-page-node-id="8q0BIpQ3ekfOJMioPBHH5s">#E9E9E9</b> / 选中 <b data-page-node-id="FQPCwFcbbq0RTwESGgnHsZ">#C4C4C4</b> + 黑图标</td></tr>
+    <tr data-page-node-id="WExvj4w9raKODr2rINPPST"><td data-page-node-id="GoLlKyaRDDwFIEHTskrlCk">侧栏分组分割线</td><td data-page-node-id="fFvADNXDRAleYN4GB17XHw">无</td><td data-page-node-id="2JfdBvBTj4lGfpmtqjQrmV">22dp × 1dp，<code data-page-node-id="N3snEcevW3wGmP2Uf0uXWL">#BDBDBD</code></td></tr>
+    <tr data-page-node-id="ITJg5SWYaGqvLdy2BgJcuf"><td data-page-node-id="jDVxt4fTca4hFfncDnRDS6">平板顶栏</td><td data-page-node-id="ShGWkX4JvPCq0t6fhMHeKl">近白圆角卡片</td><td data-page-node-id="EJD5fuDsaCBrkj2CqnNFjv">与页底同灰、通栏、不圆角，高 <b data-page-node-id="0YQOWm6rBDqXRfmXNANW0y">64dp</b></td></tr>
+    <tr data-page-node-id="dAB6k2HDM02Pfg8azBNPSZ"><td data-page-node-id="BYXt7zNICSP9dHIz8XSfBx">搜索框 / 胶囊</td><td data-page-node-id="L95pFd8y3I58oBscD6hsF9"><code data-page-node-id="2BP39r6KX2E9755qOERQjq">surfaceContainerHighest</code></td><td data-page-node-id="CwqjwGe9OLVsEZ349js1Kx"><code data-page-node-id="5y9wuJdrnSmXBXlDHyDFFN">#E9E9E9</code></td></tr>
+    <tr data-page-node-id="UwCU9c0QhXW6PykSyjz2w4"><td data-page-node-id="Ae3pibbGvKtY25Rb5jEYN6">手机顶栏</td><td data-page-node-id="DvbyR2vgnVmkRHALpntLGp">白，通栏，64dp</td><td data-page-node-id="lxLkhEgQrS41kBPmBIdFJb">与页底同灰，高 <b data-page-node-id="eqZ2xDuu9nOdphyBWUntlF">64dp</b>，不圆角</td></tr>
+    <tr data-page-node-id="Slxu2XXI4thbSV9eMLSBnc"><td data-page-node-id="HB7P0xoc6exjOkYwflTsUX">手机底栏</td><td data-page-node-id="3WFJ6uLOxe3G3rVnHdAsmy">Material3 默认 <b data-page-node-id="wpoTcsJDY4OyC7oyfY4a07">80dp</b></td><td data-page-node-id="DzuiVRrNc9XeLl0LFwFCtS">与页底同灰，高 <b data-page-node-id="NVsliKVQET17ghs1f2gpRW">76dp</b>（−4），不圆角</td></tr>
+    <tr data-page-node-id="ahiRo4IWRtGSf4FphP3P0R"><td data-page-node-id="JVq7uly0nTvMGzNuSDxmud">手机内容块</td><td data-page-node-id="4cUzXkJS26C1Und0D7XEB9">—</td><td data-page-node-id="8LxmE4ryPHUu9K47cp3GY5">左右贴屏边，上下被顶栏/底栏挤开，<b data-page-node-id="Nr93HAE0MWpKDHRvda9YNH">四角 R9</b></td></tr>
+    <tr data-page-node-id="2q0oPOZRrDAdcAV2fnAv8G"><td data-page-node-id="nn7iIggnkS6PxKTycTsGL7">手机底栏选中指示器</td><td data-page-node-id="YbwCLAqegUc2hRIW0vur2E"><code data-page-node-id="EK6LjGoG9zzzLfa5HUABhB">secondaryContainer</code></td><td data-page-node-id="W4OVS2EzSTUrmJhj0PoP8y"><code data-page-node-id="BKiC7ctBMfn1wKKoFzsLQA">#C4C4C4</code> 胶囊 + 黑图标</td></tr>
+    <tr data-page-node-id="295KFfqYULvppLu9SXsMGa"><td data-page-node-id="BluzkI0sivfpt7nacOUnMr">深色模式</td><td data-page-node-id="UFwsP5D6E0TaOZMlnJWxdK">—</td><td data-page-node-id="ZrFJVhjPgrCmMFoVd5A7SR">页底 <code data-page-node-id="A6JKIssqW0nL9nEgckpK6r">#2C2C2E</code>、内容块 <code data-page-node-id="ACFXyH8XIIZQWz55P64Uqk">#1C1C1E</code>、方片 <code data-page-node-id="PLDq20x70sAXqSok4ULKgt">#3A3A3C</code>、选中 <code data-page-node-id="NXEKa35D7TE9cUNEP3B9r9">#4A4A4C</code></td></tr>
+    <tr data-page-node-id="kR6FcK2amkkmXA61nqZeRl"><td data-page-node-id="GD4Ow7aeikrG6gfwZs92Qi">阅读器全屏</td><td data-page-node-id="3AxfSDRyuqJFIT3iCUVVbL">顶/底栏自动隐藏</td><td data-page-node-id="AIrnTYPynFFUrDGqsnWIyh">不受影响</td></tr>
+  </table>
+  <p class="sub" style="margin-top:10px" data-page-node-id="Z5TII6R1G1BNUdM7Se84r7">实现：外层 <code data-page-node-id="oBaJo159FoGCwFvyuVcG83">Box(Modifier.background(#D8D8D8))</code>；平板内容 <code data-page-node-id="2ZYgJNZjvfXW578KN7cyBA">Modifier.padding(top = 64.dp, end = 42.dp).clip(RoundedCornerShape(topEnd = 9.dp)).background(#FBFBFB)</code>；手机内容 <code data-page-node-id="ao7TxnD00w7xwt6SI9SAki">Modifier.padding(top = 64.dp, bottom = 76.dp).clip(RoundedCornerShape(9.dp)).background(#FBFBFB)</code>。</p>
+
+</div>
+</body>
+</html>

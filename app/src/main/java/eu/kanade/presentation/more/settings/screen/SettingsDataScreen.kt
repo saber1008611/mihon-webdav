@@ -39,10 +39,13 @@ import androidx.core.net.toUri
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import com.hippo.unifile.UniFile
+import eu.kanade.domain.sync.SyncPreferences
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.screen.data.CreateBackupScreen
 import eu.kanade.presentation.more.settings.screen.data.RestoreBackupScreen
 import eu.kanade.presentation.more.settings.screen.data.StorageInfo
+import eu.kanade.presentation.more.settings.screen.data.SyncSettingsSelector
+import eu.kanade.presentation.more.settings.screen.data.SyncTriggerOptionsScreen
 import eu.kanade.presentation.more.settings.widget.BasePreferenceWidget
 import eu.kanade.presentation.more.settings.widget.PrefsHorizontalPadding
 import eu.kanade.presentation.util.relativeTimeSpanString
@@ -50,6 +53,10 @@ import eu.kanade.tachiyomi.data.backup.create.BackupCreateJob
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.export.LibraryExporter
 import eu.kanade.tachiyomi.data.export.LibraryExporter.ExportOptions
+import eu.kanade.tachiyomi.data.sync.SyncDataJob
+import eu.kanade.tachiyomi.data.sync.SyncManager
+import eu.kanade.tachiyomi.data.sync.service.AliyunPanSyncService
+import eu.kanade.tachiyomi.ui.setting.track.AliyunPanQrLoginActivity
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.workManager
@@ -98,6 +105,9 @@ object SettingsDataScreen : SearchableSettings {
         val backupPreferences = remember { context.appGraph.backupPreferences }
         val storagePreferences = remember { context.appGraph.storagePreferences }
 
+        val syncPreferences = remember { context.appGraph.syncPreferences }
+        val syncService by syncPreferences.syncService.collectAsState()
+
         return listOf(
             getStorageLocationPref(storagePreferences = storagePreferences),
             Preference.PreferenceItem.InfoPreference(stringResource(MR.strings.pref_storage_location_info)),
@@ -105,7 +115,7 @@ object SettingsDataScreen : SearchableSettings {
             getBackupAndRestoreGroup(backupPreferences = backupPreferences),
             getDataGroup(),
             getExportGroup(),
-        )
+        ) + getSyncPreferences(syncPreferences = syncPreferences, syncService = syncService)
     }
 
     @Composable
@@ -306,6 +316,9 @@ object SettingsDataScreen : SearchableSettings {
                         scope.launchNonCancellable {
                             try {
                                 val deletedFiles = chapterCache.clear()
+                                // SY 2026-09-30：顺带清掉目录列表缓存（云盘/本地图源的目录枚举缓存），
+                                // 让「清除缓存」也能强制下一次浏览重新枚举远端（手动刷新入口）。
+                                eu.kanade.tachiyomi.source.webdav.DirListingCache.clearAll(context)
                                 withUIContext {
                                     context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
                                     cacheReadableSizeSema++
@@ -461,4 +474,254 @@ object SettingsDataScreen : SearchableSettings {
             },
         )
     }
+
+    // SY 2026-10-05：「网盘源（阅读）」设置组已整体移入 SettingsNetdiskScreen（一级设置项「网盘」）。
+
+    // SY --> 阿里云盘双向备份同步（移植自 TachiyomiX）
+    @Composable
+    private fun getSyncPreferences(syncPreferences: SyncPreferences, syncService: Int): List<Preference> {
+        return listOf(
+            Preference.PreferenceGroup(
+                title = stringResource(MR.strings.pref_sync_service_category),
+                preferenceItems = listOf(
+                    Preference.PreferenceItem.ListPreference(
+                        preference = syncPreferences.syncService,
+                        title = stringResource(MR.strings.pref_sync_service),
+                        entries = mapOf(
+                            SyncManager.SyncService.NONE.value to stringResource(MR.strings.off),
+                            SyncManager.SyncService.ALIYUN_PAN.value to stringResource(MR.strings.aliyun_pan),
+                        ),
+                        onValueChanged = { true },
+                    ),
+                ),
+            ),
+        ) + getSyncServicePreferences(syncPreferences, syncService)
+    }
+
+    @Composable
+    private fun getSyncServicePreferences(syncPreferences: SyncPreferences, syncService: Int): List<Preference> {
+        val syncServiceType = SyncManager.SyncService.fromInt(syncService)
+
+        val basePreferences = getBasePreferences(syncServiceType)
+
+        return if (syncServiceType != SyncManager.SyncService.NONE) {
+            basePreferences + getAdditionalPreferences(syncPreferences)
+        } else {
+            basePreferences
+        }
+    }
+
+    @Composable
+    private fun getBasePreferences(syncServiceType: SyncManager.SyncService): List<Preference> {
+        val navigator = LocalNavigator.currentOrThrow
+        val preferences = when (syncServiceType) {
+            SyncManager.SyncService.NONE -> emptyList()
+            else -> getAliyunPanPreferences()
+        }
+
+        return if (syncServiceType != SyncManager.SyncService.NONE) {
+            preferences + Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.pref_choose_what_to_sync),
+                onClick = { navigator.push(SyncSettingsSelector()) },
+            )
+        } else {
+            preferences
+        }
+    }
+
+    @Composable
+    private fun getAdditionalPreferences(syncPreferences: SyncPreferences): List<Preference> {
+        return listOf(getSyncNowPref(), getAutomaticSyncGroup(syncPreferences))
+    }
+
+    @Composable
+    private fun getAliyunPanPreferences(): List<Preference> {
+        val context = LocalContext.current
+        val syncPreferences = remember { context.appGraph.syncPreferences }
+        val scope = rememberCoroutineScope()
+
+        return listOf(
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.pref_aliyun_pan_sign_in),
+                subtitle = stringResource(MR.strings.pref_aliyun_pan_sign_in_summ),
+                onClick = {
+                    context.startActivity(AliyunPanQrLoginActivity.newIntent(context))
+                },
+            ),
+            Preference.PreferenceItem.EditTextPreference(
+                title = stringResource(MR.strings.pref_aliyun_pan_refresh_token),
+                subtitle = stringResource(MR.strings.pref_aliyun_pan_refresh_token_summ),
+                preference = syncPreferences.aliyunPanRefreshToken,
+                onValueChanged = { newValue ->
+                    scope.launch {
+                        // New token means the previously cached access token / session is stale.
+                        syncPreferences.aliyunPanRefreshToken.set(newValue.trim())
+                        syncPreferences.aliyunPanAccessToken.set("")
+                        syncPreferences.aliyunPanTokenExpireTime.set(0L)
+                    }
+                    true
+                },
+            ),
+            getAliyunPanConnectionTest(),
+            getAliyunPanPurge(),
+        )
+    }
+
+    @Composable
+    private fun getAliyunPanConnectionTest(): Preference.PreferenceItem.TextPreference {
+        val scope = rememberCoroutineScope()
+        val context = LocalContext.current
+        val aliyunPanSync = remember { context.appGraph.aliyunPanSyncService }
+
+        return Preference.PreferenceItem.TextPreference(
+            title = stringResource(MR.strings.pref_aliyun_pan_test_connection),
+            onClick = {
+                scope.launch {
+                    val result = aliyunPanSync.testConnection()
+                    when (result) {
+                        AliyunPanSyncService.ConnectionTestStatus.NOT_CONFIGURED -> context.toast(
+                            MR.strings.aliyun_pan_not_configured,
+                        )
+                        AliyunPanSyncService.ConnectionTestStatus.SUCCESS -> context.toast(
+                            MR.strings.aliyun_pan_connection_test_success,
+                        )
+                        AliyunPanSyncService.ConnectionTestStatus.FAILED -> context.toast(
+                            MR.strings.aliyun_pan_connection_test_failed,
+                        )
+                    }
+                }
+            },
+        )
+    }
+
+    @Composable
+    private fun getAliyunPanPurge(): Preference.PreferenceItem.TextPreference {
+        val scope = rememberCoroutineScope()
+        val context = LocalContext.current
+        val aliyunPanSync = remember { context.appGraph.aliyunPanSyncService }
+        var showPurgeDialog by remember { mutableStateOf(false) }
+
+        if (showPurgeDialog) {
+            PurgeConfirmationDialog(
+                message = stringResource(MR.strings.pref_purge_confirmation_aliyun_pan_message),
+                onConfirm = {
+                    showPurgeDialog = false
+                    scope.launch {
+                        val result = aliyunPanSync.deleteSyncDataFromAliyunPan()
+                        when (result) {
+                            AliyunPanSyncService.DeleteSyncDataStatus.NOT_CONFIGURED -> context.toast(
+                                MR.strings.aliyun_pan_not_configured,
+                            )
+                            AliyunPanSyncService.DeleteSyncDataStatus.NO_FILES -> context.toast(
+                                MR.strings.aliyun_pan_sync_data_not_found,
+                            )
+                            AliyunPanSyncService.DeleteSyncDataStatus.SUCCESS -> context.toast(
+                                MR.strings.aliyun_pan_sync_data_purged,
+                            )
+                            AliyunPanSyncService.DeleteSyncDataStatus.ERROR -> context.toast(
+                                MR.strings.aliyun_pan_sync_data_purge_error,
+                            )
+                        }
+                    }
+                },
+                onDismissRequest = { showPurgeDialog = false },
+            )
+        }
+
+        return Preference.PreferenceItem.TextPreference(
+            title = stringResource(MR.strings.pref_aliyun_pan_purge_sync_data),
+            onClick = { showPurgeDialog = true },
+        )
+    }
+
+    @Composable
+    private fun PurgeConfirmationDialog(
+        message: String,
+        onConfirm: () -> Unit,
+        onDismissRequest: () -> Unit,
+    ) {
+        AlertDialog(
+            onDismissRequest = onDismissRequest,
+            title = { Text(text = stringResource(MR.strings.pref_purge_confirmation_title)) },
+            text = { Text(text = message) },
+            dismissButton = {
+                TextButton(onClick = onDismissRequest) {
+                    Text(text = stringResource(MR.strings.action_cancel))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onConfirm) {
+                    Text(text = stringResource(MR.strings.action_ok))
+                }
+            },
+        )
+    }
+
+    @Composable
+    private fun getSyncNowPref(): Preference.PreferenceGroup {
+        val context = LocalContext.current
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_sync_now_group_title),
+            preferenceItems = listOf(
+                getSyncOptionsPref(),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_sync_now),
+                    subtitle = stringResource(MR.strings.pref_sync_now_subtitle),
+                    onClick = {
+                        if (!SyncDataJob.isRunning(context)) {
+                            SyncDataJob.startNow(context, manual = true)
+                        } else {
+                            context.toast(MR.strings.sync_in_progress)
+                        }
+                    },
+                ),
+            ),
+        )
+    }
+
+    @Composable
+    private fun getSyncOptionsPref(): Preference.PreferenceItem.TextPreference {
+        val navigator = LocalNavigator.currentOrThrow
+        return Preference.PreferenceItem.TextPreference(
+            title = stringResource(MR.strings.pref_sync_options),
+            subtitle = stringResource(MR.strings.pref_sync_options_summ),
+            onClick = { navigator.push(SyncTriggerOptionsScreen()) },
+        )
+    }
+
+    @Composable
+    private fun getAutomaticSyncGroup(syncPreferences: SyncPreferences): Preference.PreferenceGroup {
+        val context = LocalContext.current
+        val syncIntervalPref = syncPreferences.syncInterval
+        val lastSync by syncPreferences.lastSyncTimestamp.collectAsState()
+
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_sync_automatic_category),
+            preferenceItems = listOf(
+                Preference.PreferenceItem.ListPreference(
+                    preference = syncIntervalPref,
+                    title = stringResource(MR.strings.pref_sync_interval),
+                    entries = mapOf(
+                        0 to stringResource(MR.strings.off),
+                        30 to stringResource(MR.strings.update_30min),
+                        60 to stringResource(MR.strings.update_1hour),
+                        180 to stringResource(MR.strings.update_3hour),
+                        360 to stringResource(MR.strings.update_6hour),
+                        720 to stringResource(MR.strings.update_12hour),
+                        1440 to stringResource(MR.strings.update_24hour),
+                        2880 to stringResource(MR.strings.update_48hour),
+                        10080 to stringResource(MR.strings.update_weekly),
+                    ),
+                    onValueChanged = {
+                        SyncDataJob.setupTask(context, it)
+                        true
+                    },
+                ),
+                Preference.PreferenceItem.InfoPreference(
+                    stringResource(MR.strings.last_synchronization, relativeTimeSpanString(lastSync)),
+                ),
+            ),
+        )
+    }
+    // SY <--
 }

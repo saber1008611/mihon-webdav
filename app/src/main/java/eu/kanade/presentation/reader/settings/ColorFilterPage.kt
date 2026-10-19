@@ -154,14 +154,15 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
             viewModel.preferences.realCuganEnabled().set(!realCuganEnabled)
         },
     )
-    // SY --> 整话超分：独立开关（不依赖「画面增强」主开关）。开启后进入章节即把整章每一页
-    // 后台超分并写入缓存，而不只是用户滑到的那几页。在线源会被逐页联网拉取。
+    // SY --> 超分让路（2026-09-29 替换原「整话超分」开关，位置不变）：
+    // 开启=触摸/滑动/开章时超分全停让路（默认，保持既有行为）；关闭=超分一直全速跑。
+    // ReaderActivity 监听该偏好，切换后立即生效（当场清/停让路状态）。
     CheckboxItem(
-        label = stringResource(MR.strings.reader_image_enhancement_whole_chapter),
-        pref = viewModel.preferences.realCuganWholeChapter(),
+        label = stringResource(MR.strings.reader_upscale_yield),
+        pref = viewModel.preferences.upscaleYieldEnabled(),
     )
     Text(
-        text = stringResource(MR.strings.reader_image_enhancement_whole_chapter_summary),
+        text = stringResource(MR.strings.reader_upscale_yield_summary),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -228,6 +229,12 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
 
         SettingsChipRow(MR.strings.reader_preload_pages) {
             val realCuganPreloadSize by viewModel.preferences.realCuganPreloadSize().collectAsState()
+            // SY 2026-10-01：「半屏」档（偏好值 0）—— 窗口 = 0.5 屏，比 1 屏更省内存/更少预取。
+            FilterChip(
+                selected = realCuganPreloadSize == 0,
+                onClick = { viewModel.preferences.realCuganPreloadSize().set(0) },
+                label = { Text(stringResource(MR.strings.reader_preload_pages_half)) },
+            )
             listOf(1, 2, 3, 5, 8).map { size ->
                 FilterChip(
                     selected = realCuganPreloadSize == size,

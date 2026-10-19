@@ -54,14 +54,18 @@ dependencyResolutionManagement {
         }
         // 腾讯云为主。腾讯云缺 ca.mpreg:imagedecoder 的 AAR（有元数据无构件），
         // 用 content filter 把 ca.mpreg 组定向到阿里云。
+        // 同理腾讯云/阿里云均缺 io.legere:pdfiumandroid-core 的 AAR（新发布构件未同步），
+        // 把 io.legere 排除出镜像、直连 mavenCentral。
         maven(url = "https://mirrors.cloud.tencent.com/nexus/repository/maven-public") {
             content {
                 excludeGroup("ca.mpreg")
+                excludeGroup("io.legere")
                 excludeGroupByRegex("com\\.github(\\..*)*")
             }
         }
         maven(url = "https://maven.aliyun.com/repository/public") {
             content {
+                excludeGroup("io.legere")
                 excludeGroupByRegex("com\\.github(\\..*)*")
             }
         }

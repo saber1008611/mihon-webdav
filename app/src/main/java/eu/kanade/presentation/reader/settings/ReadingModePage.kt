@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.domain.manga.model.readingMode
+import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsViewModel
@@ -167,6 +168,26 @@ private fun ColumnScope.PagerViewerSettings(viewModel: ReaderSettingsViewModel) 
         label = stringResource(MR.strings.pref_navigate_pan),
         pref = viewModel.preferences.navigateToPan,
     )
+
+    // SY --> 2026-10-09 双页移植：页面布局（单页 / 双页 / 自动）
+    val pageLayout by viewModel.preferences.pageLayout.collectAsState()
+    SettingsChipRow(MR.strings.pref_page_layout) {
+        PageLayout.selectableEntries.map {
+            FilterChip(
+                selected = pageLayout == it.value,
+                onClick = { viewModel.preferences.pageLayout.set(it.value) },
+                label = { Text(stringResource(it.stringRes)) },
+            )
+        }
+    }
+
+    if (pageLayout == PageLayout.DOUBLE_PAGES.value || pageLayout == PageLayout.AUTOMATIC.value) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_invert_double_pages),
+            pref = viewModel.preferences.invertDoublePages,
+        )
+    }
+    // SY <--
 
     val dualPageSplitPaged by viewModel.preferences.dualPageSplitPaged.collectAsState()
     CheckboxItem(

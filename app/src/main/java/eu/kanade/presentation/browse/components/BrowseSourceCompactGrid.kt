@@ -32,6 +32,9 @@ fun BrowseSourceCompactGrid(
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
     onVisibleMangaChanged: (Long) -> Unit = {},
+    // SY --> 对齐书架：长按选择态
+    selection: Set<Long> = emptySet(),
+    // SY <--
 ) {
     val lazyGridState = rememberLazyGridState()
 
@@ -64,6 +67,7 @@ fun BrowseSourceCompactGrid(
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceCompactGridItem(
                 manga = manga,
+                isSelected = manga.id in selection,
                 onClick = { onMangaClick(manga) },
                 onLongClick = { onMangaLongClick(manga) },
             )
@@ -80,10 +84,12 @@ fun BrowseSourceCompactGrid(
 @Composable
 private fun BrowseSourceCompactGridItem(
     manga: Manga,
+    isSelected: Boolean = false,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
 ) {
     MangaCompactGridItem(
+        isSelected = isSelected,
         title = manga.title,
         coverData = MangaCover(
             mangaId = manga.id,

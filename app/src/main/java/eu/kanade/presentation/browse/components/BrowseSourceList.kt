@@ -28,6 +28,9 @@ fun BrowseSourceList(
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
     onVisibleMangaChanged: (Long) -> Unit = {},
+    // SY --> 对齐书架：长按选择态
+    selection: Set<Long> = emptySet(),
+    // SY <--
 ) {
     val lazyListState = rememberLazyListState()
 
@@ -57,6 +60,7 @@ fun BrowseSourceList(
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceListItem(
                 manga = manga,
+                isSelected = manga.id in selection,
                 onClick = { onMangaClick(manga) },
                 onLongClick = { onMangaLongClick(manga) },
             )
@@ -73,10 +77,12 @@ fun BrowseSourceList(
 @Composable
 private fun BrowseSourceListItem(
     manga: Manga,
+    isSelected: Boolean = false,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
 ) {
     MangaListItem(
+        isSelected = isSelected,
         title = manga.title,
         coverData = MangaCover(
             mangaId = manga.id,

@@ -34,6 +34,7 @@ import eu.kanade.presentation.util.LocalBackPress
 import eu.kanade.presentation.util.Screen
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.automirroredrounded.ChromeReaderMode
+import mihon.icons.materialsymbols.rounded.Cloud
 import mihon.icons.materialsymbols.rounded.Code
 import mihon.icons.materialsymbols.rounded.CollectionsBookmark
 import mihon.icons.materialsymbols.rounded.Download
@@ -206,6 +207,13 @@ object SettingsMainScreen : Screen() {
             subtitleRes = MR.strings.pref_browse_summary,
             icon = MaterialSymbols.Rounded.Explore,
             screen = SettingsBrowseScreen,
+        ),
+        // SY 2026-10-05：一级设置项「网盘」——网盘源（115/夸克/阿里云盘）+ WebDAV + 备份同步入口
+        Item(
+            titleRes = MR.strings.pref_category_netdisk,
+            subtitleRes = MR.strings.pref_netdisk_summary,
+            icon = MaterialSymbols.Rounded.Cloud,
+            screen = SettingsNetdiskScreen,
         ),
         Item(
             titleRes = MR.strings.label_data_storage,

@@ -70,6 +70,12 @@ class DownloadPreferences(
 
     val cloudSyncDestination: Preference<String> = preferenceStore.getString("cloud_sync_destination", "")
 
+    /** SY --> WebDAV 阅读源的文件夹视图：除默认 destination 外额外浏览的云端目录（相对 WebDAV 根）。 */
+    val cloudSyncFolders: Preference<Set<String>> = preferenceStore.getStringSet(
+        "cloud_sync_folders",
+        emptySet(),
+    )
+
     val cloudSyncDeleteAfterUpload: Preference<Boolean> = preferenceStore.getBoolean(
         "cloud_sync_delete_after_upload",
         false,

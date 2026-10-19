@@ -64,6 +64,10 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 class MangaScreen(
     private val mangaId: Long,
     val fromSource: Boolean = false,
+    // SY --> 「只有一章的漫画：点一下直接进阅读器」。
+    // 由调用方（书架 / WebDAV 文件夹书架）传入；多章的漫画行为完全不变（照旧停在详情页）。
+    private val openDirectlyIfSingleChapter: Boolean = false,
+    // SY <--
 ) : Screen(), AssistContentScreen {
 
     private var assistUrl: String? = null
@@ -90,6 +94,32 @@ class MangaScreen(
 
         val successState = state as MangaViewModel.State.Success
         val isHttpSource = remember { successState.source is HttpSource }
+
+        // SY --> 只有一章的漫画：进详情页后自动跳到阅读器。
+        //
+        // ⚠️ 铁律：**绝不阻塞详情页的显示**。
+        // 上一版为了「避免详情页闪一下」，在判断出章节数之前只渲染 LoadingScreen 并 return，
+        // 于是**多章漫画进详情页也要先等一次网络拉取**（明明详情页早就能画）——
+        // 用户反馈「正常进章节详情的都卡了」，就是这里造成的回归。
+        // 现在详情页照旧**立刻渲染**（与没有这个功能时逐帧一致）；等章节拉取结束后若发现
+        // 只有一章，再自动打开阅读器并把自己从返回栈里弹掉。
+        if (openDirectlyIfSingleChapter) {
+            var launched by remember(successState.manga.id) { mutableStateOf(false) }
+            LaunchedEffect(
+                successState.manga.id,
+                successState.isRefreshingData,
+                successState.chapters.size,
+            ) {
+                // 必须等章节拉完（isRefreshingData == false），否则会把「还没拉到」误判成「只有一章」
+                if (launched || successState.isRefreshingData) return@LaunchedEffect
+                val onlyChapter = successState.chapters.singleOrNull() ?: return@LaunchedEffect
+                launched = true
+                openChapter(context, onlyChapter.chapter)
+                // 让返回键回到进入前的列表，而不是停在刚被跳过的详情页
+                navigator.pop()
+            }
+        }
+        // SY <--
 
         LaunchedEffect(successState.manga, viewModel.source) {
             if (isHttpSource) {

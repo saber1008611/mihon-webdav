@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">mihonA</string>
+    <string name="app_name" translatable="false">mihonW</string>
 
     <!-- Generic strings -->
     <string name="on">On</string>
@@ -77,6 +77,7 @@
     <string name="action_search_settings">Search settings</string>
     <string name="action_global_search">Global search</string>
     <string name="action_select_all">Select all</string>
+    <string name="action_unselect_all">Unselect all</string>
     <string name="action_select_inverse">Select inverse</string>
     <string name="action_mark_as_read">Mark as read</string>
     <string name="action_mark_as_unread">Mark as unread</string>
@@ -90,6 +91,20 @@
     <string name="action_disable_all">Disable all</string>
     <string name="action_edit">Edit</string>
     <string name="action_add">Add</string>
+    <string name="action_add_folder">Add folder</string>
+    <!-- SY 2026-10-19：「云盘」源右上角的挂载入口，与本地文件夹区分 -->
+    <string name="action_add_webdav_folder">Add WebDAV folder</string>
+    <!-- SY --> 扫描封面（文件夹书架溢出菜单） -->
+    <string name="action_scan_covers">Scan covers</string>
+    <string name="action_scan_covers_slow">Slow cover scan (4 threads)</string>
+    <string name="action_scan_covers_2threads">1-thread cover scan</string>
+    <string name="scan_covers_progress">Scanning covers %1$d/%2$d</string>
+    <string name="scan_covers_done">Cover scan finished</string>
+    <!-- SY <-->
+    <string name="source_folders_empty">No folders yet. Tap the menu to add one.</string>
+    <string name="action_folder_added">Folder added</string>
+    <string name="action_folder_add_failed">Failed to add folder</string>
+    <string name="action_add_folder_path">WebDAV folder path</string>
     <string name="action_update_category">Update category</string>
     <string name="action_open_random_manga">Open random entry</string>
     <string name="action_add_category">Add category</string>
@@ -214,6 +229,8 @@
     <string name="pref_category_downloads">Downloads</string>
     <string name="pref_category_tracking">Tracking</string>
     <string name="pref_category_advanced">Advanced</string>
+    <string name="pref_category_netdisk">Cloud drives</string>
+    <string name="pref_netdisk_summary">Netdisk reading sources, WebDAV and backup sync</string>
     <string name="pref_category_about">About</string>
 
     <string name="pref_appearance_summary">Theme, date &amp; time format</string>
@@ -239,6 +256,7 @@
     <string name="theme_lavender">Lavender</string>
     <string name="theme_midnightdusk">Midnight Dusk</string>
     <string name="theme_monochrome">Monochrome</string>
+    <string name="theme_gray">Gray</string>
     <string name="theme_nord">Nord</string>
     <string name="theme_strawberrydaiquiri">Strawberry Daiquiri</string>
     <string name="theme_tako">Tako</string>
@@ -403,6 +421,11 @@
     <string name="pref_dual_page_split">Split wide pages</string>
     <string name="pref_dual_page_invert">Invert split page placement</string>
     <string name="pref_dual_page_invert_summary">If the placement of the split wide pages don\'t match reading direction</string>
+    <string name="pref_page_layout">Page layout</string>
+    <string name="page_layout_single">Single page</string>
+    <string name="page_layout_double">Double page</string>
+    <string name="page_layout_automatic">Automatic</string>
+    <string name="pref_invert_double_pages">Invert double page placement</string>
     <string name="pref_page_rotate">Rotate wide pages to fit</string>
     <string name="pref_page_rotate_invert">Flip orientation of rotated wide pages</string>
     <string name="pref_double_tap_zoom">Double tap to zoom</string>
@@ -735,6 +758,9 @@
     <string name="no_more_results">No more results</string>
     <string name="no_results_found">No results found</string>
     <string name="local_source">Local source</string>
+    <!-- SY 2026-10-19：书架顶栏「本地文件夹 / 云盘」入口图标下方的小号说明 -->
+    <string name="library_entry_local_hint">Local</string>
+    <string name="library_entry_cloud_hint">Cloud</string>
     <string name="other_source">Other</string>
     <string name="last_used_source">Last used</string>
     <string name="pinned_sources">Pinned</string>
@@ -1106,8 +1132,8 @@
 
     <!-- SY --> 超分（从 mihon_img_upscale 移植）：画面增强设置项文案。 -->
     <string name="reader_image_enhancement">Image enhancement</string>
-    <string name="reader_image_enhancement_whole_chapter">Enhance whole chapter</string>
-    <string name="reader_image_enhancement_whole_chapter_summary">Super-resolve and cache every page in the chapter, not just the ones you scroll to. Online sources are fetched page by page over the network.</string>
+    <string name="reader_upscale_yield">Super-resolution yield</string>
+    <string name="reader_upscale_yield_summary">While enabled, super-resolution pauses during touch, scrolling and chapter opening to keep the UI smooth. While disabled, super-resolution always runs at full speed.</string>
     <!-- SY 超分引擎后端（TachiyomiX 超分移植）。两套原生库同时全局导出同名 C++ 符号，
          所以一个进程只装一个，切换后必须重启应用。 -->
     <!-- SY 下面两条是「可达式双引擎」改造前的旧模型名（sudo UltraCompact / Waifu2x Fast）。
@@ -1128,6 +1154,7 @@
     <string name="reader_scale_fixed_2x">2x (fixed)</string>
     <string name="reader_preload_pages">Preload pages</string>
     <string name="reader_preload_pages_value">%1$d pages</string>
+    <string name="reader_preload_pages_half">Half screen</string>
     <string name="reader_gpu_performance_mode">GPU performance mode</string>
     <string name="reader_gpu_performance_high">Performance 90%</string>
     <string name="reader_gpu_performance_balanced">Balanced 50%</string>
@@ -1162,15 +1189,16 @@
 
     <!-- SY start: 从 mihon_img_upscale 移植 - 云同步（WebDAV） -->
     <string name="action_select">Select</string>
-    <string name="cloud_sync">Cloud sync</string>
-    <string name="cloud_sync_login">Cloud sync login</string>
+    <!-- SY 2026-10-19：「云盘同步」在设置里统一叫 WebDAV 登录 -->
+    <string name="cloud_sync">WebDAV login</string>
+    <string name="cloud_sync_login">WebDAV login</string>
     <string name="cloud_sync_webdav_url">WebDAV address</string>
     <string name="cloud_sync_test_connection">Test connection</string>
-    <string name="cloud_sync_connection_success">Cloud sync connected</string>
-    <string name="cloud_sync_connection_failed">Cloud sync connection failed</string>
+    <string name="cloud_sync_connection_success">WebDAV connected</string>
+    <string name="cloud_sync_connection_failed">WebDAV connection failed</string>
     <string name="cloud_sync_not_configured">Not configured</string>
     <string name="cloud_sync_connected">Connected as %s</string>
-    <string name="cloud_sync_requires_cbz">Enable CBZ archive saving to use cloud sync</string>
+    <string name="cloud_sync_requires_cbz">Enable CBZ archive saving to upload via WebDAV</string>
     <string name="cloud_sync_destination">Sync destination</string>
     <string name="cloud_sync_no_destination">No destination selected</string>
     <string name="cloud_sync_delete_after_upload">Delete local file after sync</string>
@@ -1179,4 +1207,60 @@
     <!-- SY end -->
     <string name="browse_jump_to_page">Jump to page</string>
     <string name="browse_page_number_label">Page number</string>
+
+    <!-- SY start: 阿里云盘双向备份同步（移植自 TachiyomiX） -->
+    <string name="sync_complete">Sync complete</string>
+    <string name="sync_error">Sync error</string>
+    <string name="sync_success_completed">Sync completed successfully</string>
+    <string name="sync_no_remote_data">No remote data found</string>
+    <string name="sync_updated_remote">Updated remote data</string>
+    <string name="aliyun_pan_not_configured">Aliyun Drive is not configured</string>
+    <string name="sync_on_chapter_read">Sync after reading a chapter</string>
+    <string name="sync_on_chapter_open">Sync after opening an unread chapter</string>
+    <string name="sync_on_app_start">Sync on app start</string>
+    <string name="sync_on_app_resume">Sync on app resume</string>
+
+    <string name="pref_sync_service_category">Sync service</string>
+    <string name="pref_sync_service">Sync service</string>
+    <string name="aliyun_pan">Aliyun Drive</string>
+    <string name="pref_choose_what_to_sync">Choose what to sync</string>
+    <string name="label_triggers">Triggers</string>
+
+    <string name="pref_aliyun_pan_sign_in">Sign in to Aliyun Drive</string>
+    <string name="pref_aliyun_pan_sign_in_summ">Scan the QR code with the Aliyun Drive app</string>
+    <string name="pref_aliyun_pan_refresh_token">Refresh token</string>
+    <string name="pref_aliyun_pan_refresh_token_summ">Paste a refresh token if QR login is unavailable</string>
+    <string name="pref_aliyun_pan_test_connection">Test connection</string>
+    <string name="aliyun_pan_connection_test_success">Aliyun Drive connection successful</string>
+    <string name="aliyun_pan_connection_test_failed">Aliyun Drive connection failed</string>
+    <string name="pref_aliyun_pan_purge_sync_data">Purge sync data from Aliyun Drive</string>
+    <string name="pref_purge_confirmation_title">Purge sync data</string>
+    <string name="pref_purge_confirmation_aliyun_pan_message">This will delete the sync data stored in Aliyun Drive. Your local library is not modified.</string>
+    <string name="aliyun_pan_sync_data_not_found">No sync data found in Aliyun Drive</string>
+    <string name="aliyun_pan_sync_data_purged">Sync data purged from Aliyun Drive</string>
+    <string name="aliyun_pan_sync_data_purge_error">Failed to purge sync data from Aliyun Drive</string>
+
+    <string name="pref_sync_now_group_title">Sync now</string>
+    <string name="pref_sync_now">Sync now</string>
+    <string name="pref_sync_now_subtitle">Upload local data and restore remote data</string>
+    <string name="pref_sync_options">Sync options</string>
+    <string name="pref_sync_options_summ">Choose when synchronization should run</string>
+    <string name="pref_sync_automatic_category">Automatic sync</string>
+    <string name="pref_sync_interval">Sync interval</string>
+    <string name="last_synchronization">Last synchronization: %s</string>
+    <string name="sync_in_progress">A sync is already in progress</string>
+    <string name="update_30min">Every 30 minutes</string>
+    <string name="update_1hour">Every hour</string>
+    <string name="update_3hour">Every 3 hours</string>
+
+    <string name="aliyun_pan_qr_waiting">Scan the QR code with the Aliyun Drive app to sign in</string>
+    <string name="aliyun_pan_qr_scanned">Scanned, please confirm on your phone</string>
+    <string name="aliyun_pan_qr_failed">Sign in failed</string>
+    <string name="aliyun_pan_qr_expired">QR code expired, please refresh</string>
+    <string name="aliyun_pan_qr_refresh">Refresh</string>
+    <string name="aliyun_pan_qr_save">Save</string>
+    <string name="aliyun_pan_qr_saved">QR code saved to gallery</string>
+    <string name="aliyun_pan_qr_save_failed">Failed to save QR code</string>
+    <string name="aliyun_pan_login_success">Signed in to Aliyun Drive</string>
+    <!-- SY end -->
 </resources>

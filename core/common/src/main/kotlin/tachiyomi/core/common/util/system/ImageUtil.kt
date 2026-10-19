@@ -179,6 +179,86 @@ object ImageUtil {
         return output
     }
 
+    /**
+     * SY 2026-10-09 双页移植（来自上游 mihon_img_upscale）：
+     * 把两张页的位图左右并排合成一张，供「双页模式」一屏显示。
+     *
+     * @param isLTR 阅读方向：true 时第一张在左，false（R2L）时第一张在右。
+     * @param hingeGap 两页之间留出的缝隙（px，0 = 不留）。
+     */
+    fun mergeBitmaps(
+        iBitmap: Bitmap,
+        iBitmap2: Bitmap,
+        isLTR: Boolean,
+        @ColorInt background: Int = Color.WHITE,
+        hingeGap: Int = 0,
+        context: Context? = null,
+    ): BufferedSource {
+        var imageBitmap = iBitmap
+        var imageBitmap2 = iBitmap2
+        var height = imageBitmap.height
+        var width = imageBitmap.width
+        var height2 = imageBitmap2.height
+        var width2 = imageBitmap2.width
+        val maxHeight = max(height, height2)
+        val maxWidth = max(width, width2)
+        val adjustedHingeGap = context?.let {
+            val displayHeight = it.resources.displayMetrics.heightPixels
+            if (displayHeight > 0) {
+                (maxHeight.toFloat() / displayHeight * hingeGap).toInt()
+            } else {
+                hingeGap
+            }
+        } ?: hingeGap
+
+        val result = createBitmap((maxWidth * 2) + adjustedHingeGap, maxHeight)
+        result.applyCanvas {
+            drawColor(background)
+            val widthAndHinge = maxWidth + adjustedHingeGap
+            if (height != maxHeight && width != maxWidth) {
+                val minRatio = min(maxHeight / height.toFloat(), maxWidth / width.toFloat())
+                imageBitmap = Bitmap.createScaledBitmap(
+                    imageBitmap,
+                    (width * minRatio).toInt(),
+                    (height * minRatio).toInt(),
+                    true,
+                )
+            }
+            height = imageBitmap.height
+            width = imageBitmap.width
+            val firstPart = Rect(
+                if (isLTR) max(maxWidth - width, 0) else widthAndHinge,
+                (maxHeight - height) / 2,
+                (if (isLTR) max(maxWidth - width, 0) else widthAndHinge) + width,
+                height + (maxHeight - height) / 2,
+            )
+            drawBitmap(imageBitmap, null, firstPart, null)
+
+            if (height2 != maxHeight && width2 != maxWidth) {
+                val minRatio = min(maxHeight / height2.toFloat(), maxWidth / width2.toFloat())
+                imageBitmap2 = Bitmap.createScaledBitmap(
+                    imageBitmap2,
+                    (width2 * minRatio).toInt(),
+                    (height2 * minRatio).toInt(),
+                    true,
+                )
+            }
+            height2 = imageBitmap2.height
+            width2 = imageBitmap2.width
+            val secondPart = Rect(
+                if (!isLTR) max(maxWidth - width2, 0) else widthAndHinge,
+                (maxHeight - height2) / 2,
+                (if (!isLTR) max(maxWidth - width2, 0) else widthAndHinge) + width2,
+                height2 + (maxHeight - height2) / 2,
+            )
+            drawBitmap(imageBitmap2, null, secondPart, null)
+        }
+
+        val output = Buffer()
+        result.compress(Bitmap.CompressFormat.JPEG, 100, output.outputStream())
+        return output
+    }
+
     enum class Side {
         RIGHT,
         LEFT,
@@ -301,13 +381,41 @@ object ImageUtil {
     /**
      * Algorithm for determining what background to accompany a comic/manga page
      */
-    fun chooseBackground(context: Context, imageStream: InputStream): Drawable {
+    fun chooseBackground(context: Context, imageStream: InputStream): Drawable =
+        chooseBackground(context, 0L) { imageStream }
+
+    /**
+     * 同 [chooseBackground]，但允许先把超大图降采样再取边缘色。
+     *
+     * SY --> 2026-09-26：旧实现走 `ImageDecoder.new(stream).decode()`，是**全分辨率**解码。
+     * 条漫每绑一页都要调一次，而且是在 `frame.setImage` **之前** ⇒ 直接推迟出图。
+     * 本机实测页面是 3309×2500(=8.3MP) / 5620×2500(=14.1MP) 的 PNG，每页白白解码
+     * 几十 MB、上百毫秒，而这个算法只用十来个像素。这里先按 2 的幂 inSampleSize
+     * 降到 [maxPixels] 以内；[maxPixels] <= 0 表示不降采样，行为与旧实现完全一致
+     * （分页阅读器的 automaticBackground 路径不受影响）。
+     */
+    fun chooseBackground(context: Context, maxPixels: Long, openStream: () -> InputStream): Drawable {
         val image = try {
-            ImageDecoder.new(imageStream).use { it.decode() }.let { res ->
-                createBitmap(res.width, res.height).also { bitmap ->
-                    res.image.rewind()
-                    bitmap.copyPixelsFromBuffer(res.image)
+            if (maxPixels <= 0L) {
+                ImageDecoder.new(openStream()).use { it.decode() }.let { res ->
+                    createBitmap(res.width, res.height).also { bitmap ->
+                        res.image.rewind()
+                        bitmap.copyPixelsFromBuffer(res.image)
+                    }
                 }
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                runCatching { openStream().use { BitmapFactory.decodeStream(it, null, bounds) } }
+                var sample = 1
+                val w = bounds.outWidth.toLong()
+                val h = bounds.outHeight.toLong()
+                if (w > 0 && h > 0) {
+                    while (w * h / (sample.toLong() * sample) > maxPixels) {
+                        sample *= 2
+                    }
+                }
+                val options = BitmapFactory.Options().apply { inSampleSize = sample }
+                openStream().use { BitmapFactory.decodeStream(it, null, options) }
             }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR) { "chooseBackground: ${e.message}" }

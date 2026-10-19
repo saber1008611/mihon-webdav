@@ -21,6 +21,10 @@ import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.repository.StubSourceRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.LocalSource
+import eu.kanade.tachiyomi.source.netdisk.aliyun.AliyunPanSource
+import eu.kanade.tachiyomi.source.netdisk.cloud115open.Cloud115OpenSource
+import eu.kanade.tachiyomi.source.netdisk.quark.QuarkSource
+import eu.kanade.tachiyomi.source.webdav.LocalWebDavSource
 import eu.kanade.tachiyomi.source.webdav.WebDavSource
 import java.util.concurrent.ConcurrentHashMap
 
@@ -30,8 +34,11 @@ import java.util.concurrent.ConcurrentHashMap
 class AndroidSourceManager(
     private val extensionManager: ExtensionManager,
     private val sourceRepository: StubSourceRepository,
-    private val localSource: LocalSource,
     private val webDavSource: WebDavSource,
+    private val localWebDavSource: LocalWebDavSource,
+    private val quarkSource: QuarkSource,
+    private val aliyunPanSource: AliyunPanSource,
+    private val cloud115OpenSource: Cloud115OpenSource,
     private val downloadManager: Lazy<DownloadManager>,
 ) : SourceManager {
 
@@ -54,9 +61,16 @@ class AndroidSourceManager(
                 .collectLatest { extensions ->
                     val mutableMap = ConcurrentHashMap<Long, Source>(
                         mapOf(
-                            LocalSource.ID to localSource,
+                            // SY --> 本地文件夹版 WebDAV 图源：接管 LocalSource.ID 槽位，
+                            // 旧 LocalSource 不再注册，书架里已有的本地漫画（source=LocalSource.ID）自动归到本源。
+                            LocalSource.ID to localWebDavSource,
                             // SY --> 路线 A 方案 1：把 WebDAV 云盘源注册进源列表，使其可浏览/阅读。
                             WebDavSource.ID to webDavSource,
+                            // SY --> 2026-10-05：网盘源（115 / 夸克）——与 WebDAV 共用「文件夹样式」浏览逻辑。
+                            QuarkSource.ID to quarkSource,
+                            AliyunPanSource.ID to aliyunPanSource,
+                            // SY --> 2026-10-08：115 开放平台（OAuth）源，与 Cookie 模式双轨并存。
+                            Cloud115OpenSource.ID to cloud115OpenSource,
                             // SY <--
                         ),
                     )

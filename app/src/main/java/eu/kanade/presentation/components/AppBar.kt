@@ -2,9 +2,11 @@ package eu.kanade.presentation.components
 
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
@@ -37,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -154,9 +157,10 @@ fun AppBar(
             title = titleContent,
             actions = actions,
             colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = backgroundColor ?: MaterialTheme.colorScheme.surfaceColorAtElevation(
-                    elevation = if (isActionMode) 3.dp else 0.dp,
-                ),
+                // SY --> 2026-10-03 灰调外框：顶栏统一取 surfaceContainer（灰），
+                // 与侧栏 / 底部导航栏同色，平板下三块连成 L 型；内容区仍是 surface（浅色）。
+                containerColor = backgroundColor ?: MaterialTheme.colorScheme.surfaceContainer,
+                // SY <--
             ),
             scrollBehavior = scrollBehavior,
         )
@@ -208,15 +212,33 @@ fun AppBarActions(
             state = rememberTooltipState(),
             focusable = false,
         ) {
-            IconButton(
-                onClick = it.onClick,
-                enabled = it.enabled,
-            ) {
-                Icon(
-                    imageVector = it.icon,
-                    tint = it.iconTint ?: LocalContentColor.current,
-                    contentDescription = it.title,
-                )
+            // SY 2026-10-19：设置了 label 的 action 在图标下方叠一行小号说明。
+            // 外层 Box 只做 wrap-content（尺寸 = IconButton 本身），说明文字贴在按钮底部
+            // 图标字形之外的空白里 —— 因此**顶栏高度、相邻图标位置都不受影响**。
+            Box(contentAlignment = Alignment.Center) {
+                IconButton(
+                    onClick = it.onClick,
+                    enabled = it.enabled,
+                ) {
+                    Icon(
+                        imageVector = it.icon,
+                        tint = it.iconTint ?: LocalContentColor.current,
+                        contentDescription = it.title,
+                    )
+                }
+                it.label?.let { label ->
+                    Text(
+                        text = label,
+                        fontSize = 8.sp,
+                        lineHeight = 9.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        color = LocalContentColor.current.copy(alpha = 0.62f),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 1.dp),
+                    )
+                }
             }
         }
     }
@@ -440,6 +462,8 @@ sealed interface AppBar {
         val iconTint: Color? = null,
         val onClick: () -> Unit,
         val enabled: Boolean = true,
+        // SY 2026-10-19：图标下方的小号说明（书架「本地 / 云盘」入口用），null 时不显示
+        val label: String? = null,
     ) : AppBarAction
 
     data class OverflowAction(

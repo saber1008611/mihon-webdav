@@ -8,6 +8,7 @@ import dev.zacsweers.metrox.viewmodel.MetroViewModelFactory
 import dev.zacsweers.metrox.viewmodel.ViewModelGraph
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.extension.interactor.TrustExtension
+import eu.kanade.domain.sync.SyncPreferences
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.domain.track.service.DelayedTrackingUpdateJob
@@ -25,6 +26,10 @@ import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadJob
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import eu.kanade.tachiyomi.data.sync.SyncDataJob
+import eu.kanade.tachiyomi.data.sync.SyncManager
+import eu.kanade.tachiyomi.data.sync.service.AliyunPanService
+import eu.kanade.tachiyomi.data.sync.service.AliyunPanSyncService
 import eu.kanade.tachiyomi.data.library.MetadataUpdateJob
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.track.TrackerManager
@@ -34,6 +39,12 @@ import eu.kanade.tachiyomi.extension.util.ExtensionInstallActivity
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.NetworkPreferences
+import eu.kanade.tachiyomi.source.netdisk.NetdiskPreferences
+import eu.kanade.tachiyomi.source.netdisk.aliyun.AliyunPanSource
+import eu.kanade.tachiyomi.source.netdisk.cloud115open.Cloud115OpenApi
+import eu.kanade.tachiyomi.source.netdisk.cloud115open.Cloud115OpenSource
+import eu.kanade.tachiyomi.source.netdisk.quark.QuarkApi
+import eu.kanade.tachiyomi.source.netdisk.quark.QuarkSource
 import eu.kanade.tachiyomi.ui.base.delegate.SecureActivityDelegateImpl
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
@@ -71,6 +82,7 @@ interface AppGraph : ViewModelGraph {
     fun inject(metadataUpdateJob: MetadataUpdateJob)
     fun inject(backupRestoreJob: BackupRestoreJob)
     fun inject(backupCreateJob: BackupCreateJob)
+    fun inject(syncDataJob: SyncDataJob)
     fun inject(delayedTrackingUpdateJob: DelayedTrackingUpdateJob)
     fun inject(downloadJob: DownloadJob)
     fun inject(notificationReceiver: NotificationReceiver)
@@ -100,6 +112,25 @@ interface AppGraph : ViewModelGraph {
 
     // SY --> 从 mihon_img_upscale 移植：WebDAV 云同步客户端
     val cloudSyncService: CloudSyncService
+    // SY <--
+
+    // SY --> 从 TachiyomiX 移植：阿里云盘双向备份同步
+    val syncPreferences: SyncPreferences
+    val syncManager: SyncManager
+    val aliyunPanService: AliyunPanService
+    val aliyunPanSyncService: AliyunPanSyncService
+    // SY <--
+
+    // SY --> 2026-10-05：网盘源（夸克 / 阿里云盘，阅读图源 + 设置页「网盘源」入口）
+    // SY 2026-10-08：115 Cookie 模式（cloud115Api / cloud115Source）已移除，115 仅保留开放平台 OAuth 链路
+    val netdiskPreferences: NetdiskPreferences
+    val quarkApi: QuarkApi
+    val quarkSource: QuarkSource
+    val aliyunPanSource: AliyunPanSource
+
+    // SY --> 2026-10-08：115 开放平台（OAuth）——115 的唯一接入链路
+    val cloud115OpenApi: Cloud115OpenApi
+    val cloud115OpenSource: Cloud115OpenSource
     // SY <--
 
     val updateChecker: AppUpdateChecker

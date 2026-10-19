@@ -25,6 +25,7 @@
     <string name="action_search">搜尋</string>
     <string name="action_global_search">全域搜尋</string>
     <string name="action_select_all">全選</string>
+    <string name="action_unselect_all">取消選擇</string>
     <string name="action_mark_as_read">標示為已讀</string>
     <string name="action_mark_as_unread">標示為未讀</string>
     <string name="action_mark_previous_as_read">標示過往章節為已讀</string>
@@ -35,6 +36,20 @@
     <string name="action_update_library">更新書櫃</string>
     <string name="action_edit">編輯</string>
     <string name="action_add">新增</string>
+    <string name="action_add_folder">新增資料夾</string>
+    <!-- SY 2026-10-19：「雲端」源右上角的掛載入口，與本機資料夾區分 -->
+    <string name="action_add_webdav_folder">新增 WebDAV 資料夾</string>
+    <!-- SY --> 掃描封面（書架資料夾溢出選單） -->
+    <string name="action_scan_covers">掃描封面</string>
+    <string name="action_scan_covers_slow">慢速封面4執行緒</string>
+    <string name="action_scan_covers_2threads">1執行緒掃描封面</string>
+    <string name="scan_covers_progress">正在掃描封面 %1$d/%2$d</string>
+    <string name="scan_covers_done">封面掃描完成</string>
+    <!-- SY <-->
+    <string name="source_folders_empty">尚無資料夾，點選右上角選單新增</string>
+    <string name="action_folder_added">已新增資料夾</string>
+    <string name="action_folder_add_failed">新增資料夾失敗</string>
+    <string name="action_add_folder_path">WebDAV 資料夾路徑</string>
     <string name="action_add_category">新增類別</string>
     <string name="action_edit_categories">編輯類別</string>
     <string name="action_rename_category">重新命名類別</string>
@@ -67,6 +82,8 @@
     <string name="pref_category_reader">閱讀</string>
     <string name="pref_category_downloads">下載</string>
     <string name="pref_category_advanced">進階</string>
+    <string name="pref_category_netdisk">網盤</string>
+    <string name="pref_netdisk_summary">網盤源（閱讀）、WebDAV 與備份同步</string>
     <string name="pref_category_about">關於</string>
     <string name="portrait">直向</string>
     <string name="landscape">橫向</string>
@@ -201,6 +218,9 @@
     <string name="unknown_error">不明的錯誤</string>
     <string name="no_more_results">沒有更多結果</string>
     <string name="local_source">本機來源</string>
+    <!-- SY 2026-10-19：書架頂欄「本機資料夾 / 雲端」入口圖示下方的小字說明 -->
+    <string name="library_entry_local_hint">本機</string>
+    <string name="library_entry_cloud_hint">雲端</string>
     <string name="other_source">其他</string>
     <string name="browse">探索</string>
     <string name="ongoing">連載中</string>
@@ -929,15 +949,16 @@
     <string name="pref_filter_upcoming_categories_details">類別同時屬於「排除」及「包含」的作品將不會顯示。</string>
     <!-- SY start: 雲端同步（WebDAV）與超分狀態 -->
     <string name="action_select">選擇</string>
-    <string name="cloud_sync">雲端同步</string>
-    <string name="cloud_sync_login">雲端同步登入</string>
+    <!-- SY 2026-10-19：依使用者要求，設定裡的「雲端同步」統一改名為「WebDAV 登入」 -->
+    <string name="cloud_sync">WebDAV 登入</string>
+    <string name="cloud_sync_login">WebDAV 登入</string>
     <string name="cloud_sync_webdav_url">WebDAV 位址</string>
     <string name="cloud_sync_test_connection">測試連線</string>
-    <string name="cloud_sync_connection_success">雲端同步已連線</string>
-    <string name="cloud_sync_connection_failed">雲端同步連線失敗</string>
+    <string name="cloud_sync_connection_success">WebDAV 已連線</string>
+    <string name="cloud_sync_connection_failed">WebDAV 連線失敗</string>
     <string name="cloud_sync_not_configured">尚未設定</string>
     <string name="cloud_sync_connected">已連線為 %s</string>
-    <string name="cloud_sync_requires_cbz">需要先開啟「儲存為 CBZ 壓縮檔」才能使用雲端同步</string>
+    <string name="cloud_sync_requires_cbz">需要先開啟「儲存為 CBZ 壓縮檔」才能使用 WebDAV 上傳</string>
     <string name="cloud_sync_destination">同步目的地</string>
     <string name="cloud_sync_no_destination">尚未選擇目的地</string>
     <string name="cloud_sync_delete_after_upload">同步後刪除本機檔案</string>
@@ -957,8 +978,8 @@
     <string name="reader_show_processing_status">在左下角顯示處理狀態</string>
     <!-- SY start: 超分設定項（先前只寫在 base，中文環境會回退成英文） -->
     <string name="reader_image_enhancement">畫面增強</string>
-    <string name="reader_image_enhancement_whole_chapter">整話超分</string>
-    <string name="reader_image_enhancement_whole_chapter_summary">對本章每一頁都做超分並寫入快取，而不只是你滑到的那些頁。線上源會逐頁連網拉取。</string>
+    <string name="reader_upscale_yield">超分讓路</string>
+    <string name="reader_upscale_yield_summary">開啟後，觸摸、滑動和開章時超分會暫停，把算力讓給流暢度；關閉後超分始終全速運行。</string>
     <!-- SY 超分引擎後端（TachiyomiX 超分移植）。兩套原生庫同時全域匯出同名 C++ 符號，一個行程只裝一個，切換後必須重啟應用程式。 -->
     <!-- SY 舊模型名，程式碼已不再引用，保留以免與其它語言檔不一致（此處不寫箭頭，避免註解內出現連續兩個連字號） -->
     <string name="reader_model_anime4k_acnet_note">本版唯一的超分模型：單通道亮度網路，全程走 GPU 融合管線，畫質銳利。</string>
@@ -976,6 +997,7 @@
     <string name="reader_scale_fixed_2x">2 倍（固定）</string>
     <string name="reader_preload_pages">預載頁數</string>
     <string name="reader_preload_pages_value">%1$d 頁</string>
+    <string name="reader_preload_pages_half">半屏</string>
     <string name="reader_gpu_performance_mode">GPU 效能模式</string>
     <string name="reader_gpu_performance_high">高效能 90%</string>
     <string name="reader_gpu_performance_balanced">均衡 50%</string>

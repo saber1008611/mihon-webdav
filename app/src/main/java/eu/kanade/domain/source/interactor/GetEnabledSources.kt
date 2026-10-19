@@ -10,6 +10,9 @@ import tachiyomi.domain.source.model.Pins
 import tachiyomi.domain.source.model.Source
 import tachiyomi.domain.source.repository.SourceRepository
 import tachiyomi.source.local.isLocal
+import eu.kanade.tachiyomi.source.netdisk.aliyun.AliyunPanSource
+import eu.kanade.tachiyomi.source.netdisk.cloud115open.Cloud115OpenSource
+import eu.kanade.tachiyomi.source.netdisk.quark.QuarkSource
 import eu.kanade.tachiyomi.source.webdav.WebDavSource
 
 @Inject
@@ -28,7 +31,14 @@ class GetEnabledSources(
         ) { pinnedSourceIds, enabledLanguages, disabledSources, lastUsedSource, sources ->
             sources
                 // SY --> WebDAV 云盘源始终启用（与 LocalSource 同待遇），不受语言开关影响。
-                .filter { it.lang in enabledLanguages || it.isLocal() || it.id == WebDavSource.ID }
+                // SY 2026-10-05：网盘源（115/夸克）与 WebDAV 云盘源同待遇，不受语言开关影响。
+                .filter {
+                    it.lang in enabledLanguages || it.isLocal() ||
+                        it.id == WebDavSource.ID ||
+                        it.id == QuarkSource.ID ||
+                        it.id == AliyunPanSource.ID ||
+                        it.id == Cloud115OpenSource.ID
+                }
                 // SY <--
                 .filterNot { it.id.toString() in disabledSources }
                 .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })

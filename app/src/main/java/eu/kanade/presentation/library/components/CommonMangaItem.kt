@@ -46,23 +46,34 @@ import tachiyomi.presentation.core.util.selectedBackground
 import tachiyomi.domain.manga.model.MangaCover as MangaCoverModel
 
 object CommonMangaItemDefaults {
-    val GridHorizontalSpacer = 4.dp
-    val GridVerticalSpacer = 4.dp
+    // SY --> 美化：4dp 太挤，封面几乎贴在一起，改为 12dp 让网格有呼吸感
+    val GridHorizontalSpacer = 12.dp
+    val GridVerticalSpacer = 12.dp
+
+    // SY --> 美化：网格外边距同步放大，与格子间距呼应
+    val GridContentPadding = 12.dp
 
     @Suppress("ConstPropertyName")
     const val BrowseFavoriteCoverAlpha = 0.34f
 }
 
-private val ContinueReadingButtonSizeSmall = 28.dp
-private val ContinueReadingButtonSizeLarge = 32.dp
+// SY --> 美化：按钮与徽章尺寸微调，配合更大的圆角
+private val ContinueReadingButtonSizeSmall = 30.dp
+private val ContinueReadingButtonSizeLarge = 36.dp
 
-private val ContinueReadingButtonIconSizeSmall = 16.dp
-private val ContinueReadingButtonIconSizeLarge = 20.dp
+private val ContinueReadingButtonIconSizeSmall = 17.dp
+private val ContinueReadingButtonIconSizeLarge = 21.dp
 
-private val ContinueReadingButtonGridPadding = 6.dp
+private val ContinueReadingButtonGridPadding = 8.dp
 private val ContinueReadingButtonListSpacing = 8.dp
 
-private const val GRID_SELECTED_COVER_ALPHA = 0.76f
+private const val GRID_SELECTED_COVER_ALPHA = 0.6f
+
+// SY --> 美化：封面圆角从 extraSmall(4dp) 提到 medium(12dp)，不再生硬
+private val CoverShape = RoundedCornerShape(12.dp)
+
+// SY --> 美化：标题遮罩加深加高，长标题压在封面上也能看清
+private val CoverOverlayHeightFraction = 0.42f
 
 /**
  * Layout of grid list item with title overlaying the cover.
@@ -241,7 +252,9 @@ private fun MangaGridCover(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(MangaCover.Book.ratio),
+            .aspectRatio(MangaCover.Book.ratio)
+            // SY --> 美化：封面统一 medium 圆角 + 细描边，卡片感更强
+            .clip(CoverShape),
     ) {
         cover()
         content?.invoke(this)
@@ -320,10 +333,32 @@ private fun GridItemSelectable(
 /**
  * @see GridItemSelectable
  */
+// SY --> 美化：原来是实心色块盖住整格，改成圆角描边 + 轻微压暗，封面仍可见
 private fun Modifier.selectedOutline(
     isSelected: Boolean,
     color: Color,
-) = drawBehind { if (isSelected) drawRect(color = color) }
+) = if (isSelected) {
+    drawBehind {
+        val stroke = 2.dp.toPx()
+        drawRoundRect(
+            color = color,
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx()),
+        )
+        // 外扩描边：先画一圈底色再画内框，形成清晰边框
+        drawRoundRect(
+            color = color,
+            topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
+            size = androidx.compose.ui.geometry.Size(
+                size.width - stroke,
+                size.height - stroke,
+            ),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius((12.dp - 1.dp).toPx()),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
+        )
+    }
+} else {
+    this
+}
 
 /**
  * Layout of list item.

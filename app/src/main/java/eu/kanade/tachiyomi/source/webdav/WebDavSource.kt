@@ -2,83 +2,81 @@ package eu.kanade.tachiyomi.source.webdav
 
 import android.content.Context
 import android.net.Uri
-import com.hippo.unifile.UniFile
+import android.os.SystemClock
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.download.CloudSyncConfig
+import eu.kanade.tachiyomi.data.download.CloudSyncDirectory
 import eu.kanade.tachiyomi.data.download.CloudSyncEntry
 import eu.kanade.tachiyomi.data.download.CloudSyncService
+import eu.kanade.tachiyomi.data.download.normalizePath
+import eu.kanade.tachiyomi.source.FolderSource
+import eu.kanade.tachiyomi.source.netdisk.BaseNetdiskSource
+import eu.kanade.tachiyomi.source.netdisk.NetdiskPreferences
+import eu.kanade.tachiyomi.source.netdisk.aliyun.AliyunPanSource
+import eu.kanade.tachiyomi.source.netdisk.cloud115open.Cloud115OpenSource
+import eu.kanade.tachiyomi.source.netdisk.quark.QuarkSource
+import eu.kanade.tachiyomi.source.HeavyChapterLoadSource
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.SourceFolder
 import eu.kanade.tachiyomi.source.UnmeteredSource
-import eu.kanade.tachiyomi.source.model.Filter
-import eu.kanade.tachiyomi.source.model.FilterList
-import eu.kanade.tachiyomi.source.model.MangasPage
-import eu.kanade.tachiyomi.source.model.Page
-import eu.kanade.tachiyomi.source.model.SChapter
-import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.model.SMangaUpdate
+import eu.kanade.tachiyomi.util.lang.Hash
+import eu.kanade.tachiyomi.util.pdf.PdfiumRenderer
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
+import mihon.core.archive.RandomAccessSource
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.download.service.DownloadPreferences
 import java.io.File
 
 /**
- * SY --> 路线 A 方案 1：
+ * SY --> 路线 A 方案 1：与上传侧（CloudSyncService 把 CBZ 推到网盘）对称的「自包含」WebDAV 阅读源。
  *
- * 一个「自包含」的 WebDAV 阅读源——与上传侧（CloudSyncService 把 CBZ 推到网盘）对称，
- * 这里负责把设备 A 上传的漫画在设备 B 上读回来。
+ * 浏览/章节/封面/文件夹视图/排序逻辑全部在 [BaseWebDavSource]；本类只承载远端后端差异：
+ *  - 配置来自 DownloadPreferences 的 cloudSync* 偏好，经 CloudSyncService 发请求；
+ *  - PDF 流式路由（[openPdfChapter]：浅链流式 / 深链整本下载）；
+ *  - 远端 Range 随机读源（[WebDavRandomAccessSource]）；
+ *  - 深链 PDF 占位封面策略（[tryHandlePdfCoverLocally] / [hasPlaceholderCover]）。
  *
- * 设计要点：
- *  - 复用同一套 WebDAV 配置（DownloadPreferences 里的 cloudSync* 偏好）与同一个 CloudSyncService。
- *  - 远端目录结构与上传完全一致：destination/{漫画目录}/{章节}.cbz，漫画封面为同名 cover.jpg（与章节并列）。
- *  - 目录浏览：destination 的直接子目录即漫画文件夹；listFiles 列每个漫画文件夹内的 .cbz 章节。
- *  - 阅读：不直接实现 getPageList，而是由 ChapterLoader 在 `source is WebDavSource` 分支里
- *    先 getArchiveFile 把 CBZ 流式下载到缓存，再用现成的 ArchivePageLoader 读页（翻页/封面/ComicInfo 全复用）。
- *  - getPageList 抛 UnsupportedOperationException 是为了与 LocalSource 保持同一契约（页面由 ChapterLoader 提供）。
- *
- * 未配置 WebDAV（没开同步 / URL 为空）时，所有浏览/详情方法都优雅返回空，不会抛异常连累全局搜索等调用方。
+ * 未配置 WebDAV 时所有方法经 [isConfigured] 优雅降级为空 / 抛明确异常。
  * SY <--
  */
 @Inject
 @SingleIn(AppScope::class)
 class WebDavSource(
-    private val context: Context,
+    context: Context,
     private val cloudSyncService: CloudSyncService,
     private val downloadPreferences: DownloadPreferences,
-) : Source, UnmeteredSource {
+    // SY 2026-10-06：网盘门面 —— 挂载进「云盘」的网盘目录按前缀路由到这三个后端
+    private val quarkSource: QuarkSource,
+    private val aliyunPanSource: AliyunPanSource,
+    private val cloud115OpenSource: Cloud115OpenSource,
+    private val netdiskPreferences: NetdiskPreferences,
+) : BaseWebDavSource(context) {
 
     init {
         // 让封面 Provider 能拿到与上传同源的下载通道与 WebDAV 偏好。
         WebDavCoverBridge.cloudSyncService = cloudSyncService
         WebDavCoverBridge.downloadPreferences = downloadPreferences
+        // 封面回退（无 cover.* 时取第一话首页）需要源侧的缓存下载与归档解析能力。
+        WebDavCoverBridge.bindWebDavSource(this)
     }
 
-    override val name: String = "WebDAV 云盘"
-
+    // SY 2026-10-05：用户要求改名「云盘」（原「WebDAV 云盘」）
+    override val name: String = "云盘"
     override val id: Long = ID
-
     override val lang: String = "other"
-
     override val supportsLatest: Boolean = true
-
     override fun toString() = name
 
     /**
-     * 稳定的排序 Filter 实例：必须是单例（不能每次 getFilterList 都 new），
-     * 否则界面上用户在筛选对话框改的排序 state 与源内部读到的不是同一个对象，
-     * 「热门 / 最新」两个 tab（GetRemoteManga 不带 filters 参数）就收不到排序选择。
-     * Search 路径虽会传 filters，但也是这个同一实例，因此三处排序完全统一。
-     * index 0 = 最近更新（按目录修改时间），index 1 = 名称。
+     * 未配置时返回 null，所有对外方法据此优雅降级。
      */
-    private val sortFilter = object : Filter.Sort(
-        "排序",
-        arrayOf("最近更新", "名称"),
-    ) {}
-
-    /** 未配置时返回 null，所有对外方法据此优雅降级。 */
     private fun configOrNull(): Pair<CloudSyncConfig, String>? {
         if (!downloadPreferences.cloudSyncEnabled.get()) return null
         val config = CloudSyncConfig(
@@ -90,127 +88,167 @@ class WebDavSource(
         return config to downloadPreferences.cloudSyncDestination.get()
     }
 
-    override suspend fun getPopularManga(page: Int): MangasPage = withIOContext {
-        MangasPage(applySort(listAllManga(), defaultLatest = false), false)
-    }
-
-    override suspend fun getLatestUpdates(page: Int): MangasPage = withIOContext {
-        MangasPage(applySort(listAllManga(), defaultLatest = true), false)
-    }
-
-    override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage = withIOContext {
-        val q = query.trim()
-        val all = listAllManga()
-        val result = if (q.isBlank()) all else all.filter { it.manga.title.contains(q, ignoreCase = true) }
-        MangasPage(applySort(result, defaultLatest = false), false)
-    }
+    // ===================== 网盘门面路由（SY 2026-10-06） =====================
 
     /**
-     * 列出 WebDAV 上所有漫画：destination 的直接子目录即漫画文件夹（单层）。
-     *
-     * 返回时带上目录修改时间（lastModified）供排序使用——SManga 在本 fork 里没有时间字段，
-     * 因此用内部 [WebDavMangaListItem] 携带，避免污染/依赖共享的 SManga 定义。
-     *
-     * 关键优化：列表只列目录、**不预拉封面**——否则在几十上百本漫画的 44G 库里，
-     * 进源要等全部 cover.jpg 下载完才显示，转圈半天。
-     * 封面改为填「content://」直链（WebDavCoverProvider），由 Coil 在网格项
-     * 滚动到可见时才各自按需下载（天然懒加载，不阻塞列表，且用与上传同源的
-     * CloudSyncService 带鉴权下载，绕开 Mihon 全局图片加载器对 WebDAV 鉴权的限制）。
+     * 「添加网盘文件夹」挂载的目录以 `@<routeKey>:<id>` 前缀出现在文件夹视图里；
+     * 所有后端接缝（列目录/文件、Range 流式、下载缓存、封面）遇到该前缀一律委托给
+     * 对应网盘源 —— 于是网盘内容**完整共用云盘的封面规则 / 加载 / 流式读取**。
      */
-    private suspend fun listAllManga(): List<WebDavMangaListItem> {
-        val (config, destination) = configOrNull() ?: return emptyList()
-        return runCatching {
-            cloudSyncService.listDirectories(config, destination)
-                .map { dir ->
-                    val url = dir.path.trimStart('/')
-                    val manga = SManga.create().apply {
-                        title = dir.name
-                        this.url = url
-                        thumbnail_url = coverContentUri(url)
-                    }
-                    WebDavMangaListItem(manga, dir.lastModified)
-                }
-        }.getOrElse { e ->
-            logcat(LogPriority.ERROR, e) { "WebDavSource: failed to list manga" }
-            emptyList()
+    private fun netdiskFor(routePath: String): BaseNetdiskSource? {
+        // ⚠️ 路径可能被 normalizePath 加了前导「/」（setActiveFolder / resolveFolderCover 等），
+        // 必须先剥掉再匹配前缀，否则会掉进 WebDAV PROPFIND 分支（1.0.13 真机踩坑：HTTP 404）。
+        val p = routePath.trimStart('/')
+        if (!p.startsWith("@")) return null
+        return when (p.removePrefix("@").substringBefore(':')) {
+            QuarkSource.ROUTE_KEY -> quarkSource
+            AliyunPanSource.ROUTE_KEY -> aliyunPanSource
+            Cloud115OpenSource.ROUTE_KEY -> cloud115OpenSource
+            else -> null
         }
     }
 
-    /** 列表项 + 目录修改时间（毫秒），用于「最近更新」排序。 */
-    private data class WebDavMangaListItem(val manga: SManga, val lastModified: Long)
+    private fun innerPath(routePath: String): String =
+        routePath.trimStart('/').removePrefix("@").substringAfter(':')
+
+    private fun rePrefixDirs(key: String, dirs: List<CloudSyncDirectory>): List<CloudSyncDirectory> =
+        dirs.map { it.copy(path = "@$key:${it.path.trimStart('/')}") }
+
+    private fun rePrefixEntries(key: String, entries: List<CloudSyncEntry>): List<CloudSyncEntry> =
+        entries.map { it.copy(path = "@$key:${it.path.trimStart('/')}") }
+
+    /** 挂载记录解析：`"<routeKey>|<id>|<显示名>"`。 */
+    private fun netdiskMounts(): List<Triple<String, String, String>> =
+        netdiskPreferences.netdiskMounts.get().mapNotNull { entry ->
+            val parts = entry.split('|')
+            if (parts.size < 3) null else Triple(parts[0], parts[1], parts.drop(2).joinToString("|"))
+        }
+
+    /** 「添加网盘文件夹」挂载入口（可视化选择器调用；重复挂载返回 false）。 */
+    fun addNetdiskMount(routeKey: String, id: String, name: String): Boolean {
+        val entry = "$routeKey|$id|$name"
+        val current = netdiskPreferences.netdiskMounts.get()
+        if (entry in current) return false
+        netdiskPreferences.netdiskMounts.set(current + entry)
+        // SY 2026-10-06：重挂载时穿透目录缓存（旧缓存可能是删除前的失败/空列表）
+        val routePath = "@$routeKey:$id"
+        DirListingCache.markStaleDirectory(ID, routePath)
+        DirListingCache.markStaleEntries(ID, routePath)
+        return true
+    }
 
     /**
-     * 按用户在筛选对话框选的排序（[sortFilter]）对列表排序。
-     * 用户未选（state == null）时：
-     *  - 最新 tab（defaultLatest=true）默认按目录修改时间倒序；
-     *  - 热门 / 搜索默认保持 WebDAV 返回的原顺序（PROPFIND 顺序）。
-     * 用户已选：index 0 = 最近更新（按 lastModified），index 1 = 名称；ascending 控制升降序。
+     * SY 2026-10-06：网盘文件夹挂载后的**默认封面规则 = 4 线程扫描封面**
+     * （与书架「扫描封面」同款并发：Semaphore(4) 滑动窗口，防网盘风控）。
      */
-    private fun applySort(items: List<WebDavMangaListItem>, defaultLatest: Boolean): List<SManga> {
-        val sel = sortFilter.state
-        val sorted = if (sel == null) {
-            if (!defaultLatest) items else items.sortedByDescending { it.lastModified }
-        } else {
-            when (sel.index) {
-                0 -> if (sel.ascending) items.sortedBy { it.lastModified } else items.sortedByDescending { it.lastModified }
-                1 -> if (sel.ascending) items.sortedBy { it.manga.title.lowercase() } else items.sortedByDescending { it.manga.title.lowercase() }
-                else -> items
+    suspend fun scanNetdiskFolderCovers(routePath: String) = withIOContext {
+        val urls = runCatching { listDirectories(routePath) }
+            .onFailure { e -> logcat(LogPriority.WARN, e) { "云盘: 扫描封面列目录失败 $routePath" } }
+            .getOrDefault(emptyList())
+            .map { it.path.trimStart('/') }
+        val semaphore = Semaphore(4)
+        logcat(LogPriority.INFO) { "云盘: 网盘文件夹挂载后扫描封面（4线程，共 ${urls.size} 本）$routePath" }
+        coroutineScope {
+            urls.forEach { url ->
+                launch {
+                    semaphore.withPermit { runCatching { ensureCover(url) } }
+                }
             }
         }
-        return sorted.map { it.manga }
     }
 
-    override suspend fun getMangaUpdate(
-        manga: SManga,
-        chapters: List<SChapter>,
-        fetchDetails: Boolean,
-        fetchChapters: Boolean,
-    ): SMangaUpdate = withIOContext {
-        // 未配置 WebDAV 时保留现有数据，绝不返回空章节把已入库的章节冲掉。
-        val configured = configOrNull() != null
-        // 详情不要改写 thumbnail_url：列表里填的 content:// 直链（WebDavCoverProvider）在详情页
-        // 同样由 MangaCoverFetcher 走 Type.URI 加载，与网格网格完全一致。若在此改写成 file://
-        // 本地路径，会被详情页的 upsert 写进数据库，返回列表时污染封面——表现为「详情封面
-        // 消失、返回后整列封面也消失」。WebDavSource 没有额外的详情元数据可拉，原样返回即可。
-        val updatedChapters = if (fetchChapters && configured) getChapterList(manga) else chapters
-        SMangaUpdate(manga, updatedChapters)
+    // ===================== 后端接缝实现（其余逻辑在 BaseWebDavSource） =====================
+
+    /** WebDAV 已配置**或**有网盘挂载目录时即可浏览（网盘内容不依赖 WebDAV 配置）。 */
+    override fun isConfigured(): Boolean = configOrNull() != null || netdiskMounts().isNotEmpty()
+    override val backend = WebDavCoverStore.Backend.WEBDAV
+    override val coverAuthority = WebDavCoverBridge.COVER_AUTHORITY
+    override val coverCacheDirName = "webdav-covers"
+    override val archiveCacheSubdir = CACHE_SUBDIR
+    override val folderCoverSegment = WebDavCoverBridge.FOLDER_SEGMENT
+
+    override suspend fun listDirectories(path: String): List<CloudSyncDirectory> {
+        val nd = netdiskFor(path) ?: return configOrNull()?.let {
+            cloudSyncService.listDirectories(it.first, path)
+        } ?: emptyList()
+        return rePrefixDirs(nd.routeKey, nd.delegateListDirectories(innerPath(path)))
     }
 
-    private suspend fun getChapterList(manga: SManga): List<SChapter> = withIOContext {
-        val (config, _) = configOrNull() ?: return@withIOContext emptyList()
-        runCatching {
-            cloudSyncService.listFiles(config, manga.url)
-                .filter { isChapterFile(it.name) }
-                .map { entry ->
-                    SChapter.create().apply {
-                        url = entry.path.trimStart('/')
-                        name = entry.name.substringBeforeLast('.', entry.name)
-                        chapter_number = ChapterRecognition
-                            .parseChapterNumber(manga.title, this.name, this.chapter_number.toDouble())
-                            .toFloat()
-                    }
-                }
-                .sortedWith { c1, c2 -> c2.name.compareTo(c1.name) }
-        }.getOrElse { e ->
-            logcat(LogPriority.ERROR, e) { "WebDavSource: failed to list chapters for ${manga.url}" }
-            emptyList()
+    override suspend fun listFiles(path: String): List<CloudSyncEntry> {
+        val nd = netdiskFor(path) ?: return configOrNull()?.let {
+            cloudSyncService.listFiles(it.first, path)
+        } ?: emptyList()
+        return rePrefixEntries(nd.routeKey, nd.delegateListFiles(innerPath(path)))
+    }
+
+    /** 文件夹视图的云端目录列表：WebDAV 目录 + 挂载的网盘目录（前缀路由）。 */
+    override fun getFoldersPaths(): List<String> =
+        getWebDavFolders() + netdiskMounts().map { (key, id, _) -> "@$key:$id" }
+
+    /** 文件夹视图：WebDAV 目录用路径末段做名字，网盘挂载目录用挂载时登记的显示名。 */
+    override suspend fun getFolders(): List<SourceFolder> = withIOContext {
+        val own = getWebDavFolders().filter { it.isNotBlank() }.map { path ->
+            SourceFolder(
+                url = path,
+                name = path.substringAfterLast('/', path).ifBlank { path },
+                coverUrl = "content://$coverAuthority/$folderCoverSegment/${Uri.encode(path)}",
+            )
         }
+        val netdisks = netdiskMounts().map { (key, id, name) ->
+            val url = "@$key:$id"
+            SourceFolder(
+                url = url,
+                name = name,
+                coverUrl = "content://$coverAuthority/$folderCoverSegment/${Uri.encode(url)}",
+            )
+        }
+        own + netdisks
     }
 
-    override suspend fun getPageList(chapter: SChapter): List<Page> =
-        throw UnsupportedOperationException("WebDavSource pages are loaded by ChapterLoader")
+    override fun openRangeSource(remotePath: String): RandomAccessSource? {
+        // SY 2026-10-06：网盘挂载目录 → 委托网盘后端（动态直链 + 网盘签名头）
+        netdiskFor(remotePath)?.let { return it.delegateOpenRangeSource(innerPath(remotePath)) }
+        val (config, _) = configOrNull() ?: return null
+        return newRangeSource(config, remotePath)
+    }
 
-    override fun getFilterList(): FilterList = FilterList(sortFilter)
-
-    /**
-     * 把某一章的归档/电子书流式下载到应用缓存目录，返回其 UniFile。
-     * ChapterLoader 拿到后按扩展名选择 ArchivePageLoader（压缩包）或 EpubPageLoader（epub），
-     * 复用全部归档阅读逻辑。
-     */
-    suspend fun getArchiveFile(chapter: SChapter): UniFile = withIOContext {
+    override suspend fun downloadImageToCache(folderPath: String, fileName: String): File {
+        // SY 2026-10-06：网盘挂载目录 → 委托网盘后端（缓存目录同 cache/webdav-images，共用 256MB LRU）
+        netdiskFor(folderPath)?.let { return it.downloadImageToCache(innerPath(folderPath), fileName) }
         val (config, _) = configOrNull()
             ?: throw IllegalStateException("WebDAV 未配置，无法读取章节")
-        val fullPath = chapter.url.trimStart('/')
+        val cacheDir = File(context.cacheDir, IMG_CACHE_SUBDIR).apply { mkdirs() }
+        // SY --> 2026-10-01：改用共享 Hash.sha256（手写 hex，避免每次 new MessageDigest + format 分配）。
+        val key = Hash.sha256("$folderPath/$fileName")
+        // SY <--
+        val cacheFile = File(cacheDir, key)
+        if (!cacheFile.exists()) {
+            // SY --> 诊断用（INFO 级，release 可见）：量化单张图 HTTP 下载耗时。
+            val t0 = SystemClock.uptimeMillis()
+            cloudSyncService.downloadFile(config, folderPath, fileName, cacheFile)
+            val cost = SystemClock.uptimeMillis() - t0
+            logcat(LogPriority.INFO) { "WebDavSource: 下载 $fileName 耗时 ${cost}ms" }
+            // SY <--
+            // SY --> 2026-09-28：本目录修前**无上限**（实测 118M 且只增不减）。见 [IMG_CACHE_BYTES]。
+            enforceLruCacheBudget(cacheDir, IMG_CACHE_BYTES, setOf(cacheFile.name))
+                .forEach { (name, len) ->
+                    logcat(LogPriority.INFO) { "WebDavSource: 散图缓存超限，淘汰 $name ($len B)" }
+                }
+            // SY <--
+        } else {
+            // SY --> 命中即刷新 mtime，作为 LRU 依据（常看的散图不该因 mtime 旧被优先淘汰）。
+            cacheFile.setLastModified(System.currentTimeMillis())
+            // SY <--
+        }
+        return cacheFile
+    }
+
+    override suspend fun downloadChapterToCache(remotePath: String): File {
+        // SY 2026-10-06：网盘挂载目录 → 委托网盘后端（整本缓存落在网盘自己的归档目录，同样 1GB LRU）
+        netdiskFor(remotePath)?.let { return it.delegateDownloadChapterToCache(innerPath(remotePath)) }
+        val (config, _) = configOrNull()
+            ?: throw IllegalStateException("WebDAV 未配置，无法读取章节")
+        val fullPath = remotePath.trimStart('/')
         val lastSlash = fullPath.lastIndexOf('/')
         require(lastSlash > 0) { "WebDavSource: 非法的章节路径 $fullPath" }
         val remoteDir = fullPath.substring(0, lastSlash)
@@ -222,36 +260,153 @@ class WebDavSource(
         if (!cacheFile.exists()) {
             // 先下后读：阅读前必须先把整本 CBZ 落到缓存（方案 1）。
             cloudSyncService.downloadFile(config, remoteDir, fileName, cacheFile)
+            // SY --> 2026-09-28：本目录修前**无上限无淘汰**（实测 11 个文件累积 1.2G）。
+            // zip/cbz 已改走 Range 流式（见 ChapterLoader），这里仍有 pdf/epub/rar/7z 落盘，
+            // 必须设预算兜底。见 [ARCHIVE_CACHE_BYTES] 与 [enforceLruCacheBudget]。
+            enforceLruCacheBudget(cacheDir, ARCHIVE_CACHE_BYTES, setOf(cacheFile.name))
+                .forEach { (name, len) ->
+                    logcat(LogPriority.INFO) { "WebDavSource: 章节缓存超限，淘汰 $name ($len B)" }
+                }
+            // SY <--
+        } else {
+            // SY --> 命中即刷新 mtime，作为 LRU 依据：否则「常读的老章节」会因 mtime 旧而被优先淘汰。
+            cacheFile.setLastModified(System.currentTimeMillis())
+            // SY <--
         }
-        UniFile.fromFile(cacheFile)
-            ?: throw IllegalStateException("WebDavSource: 无法把缓存文件包装为 UniFile")
+        return cacheFile
     }
 
-    /**
-     * 判断远端文件名是否为支持的章节格式（共 10 种）。
-     * 与本地图源一致：压缩包 zip/cbz/rar/cbr/7z/cb7/tar/cbt（底层 libarchive 原生解压），
-     * 外加 epub 电子书（EpubReader）与 pdf（Android 内置 PdfRenderer 逐页渲染）。
-     */
-    private fun isChapterFile(name: String): Boolean {
-        val ext = name.substringAfterLast('.', "").lowercase()
-        return ext in SUPPORTED_CHAPTER_EXTENSIONS
+    override suspend fun downloadCoverEntry(actual: CloudSyncEntry, mangaUrl: String, coverDir: File): File? {
+        // SY 2026-10-06：网盘挂载目录 → 委托网盘后端下载 cover.*（封面落进云盘的 webdav-covers，共用规则）
+        netdiskFor(mangaUrl)?.let {
+            val innerActual = actual.copy(path = innerPath(actual.path))
+            return it.delegateDownloadCoverEntry(innerActual, innerPath(mangaUrl), coverDir)
+        }
+        val (config, _) = configOrNull() ?: return null
+        val trimmed = mangaUrl.trimStart('/')
+        val ext = actual.name.substringAfterLast('.', "")
+        val baseName = mangaUrl.replace('/', '_')
+        val dst = File(coverDir, "$baseName.$ext")
+        cloudSyncService.downloadFile(config, trimmed, actual.name, dst)
+        return dst.takeIf { it.exists() && it.length() > 0L && !CoverQuality.isBlank(it) }
     }
 
-    private val SUPPORTED_CHAPTER_EXTENSIONS = setOf(
-        "zip", "cbz", "rar", "cbr", "7z", "cb7", "tar", "cbt", "epub", "pdf",
-    )
+    override fun openPdfRenderer(ras: RandomAccessSource): PdfiumRenderer =
+        PdfiumRenderer.openProxy(context, ras)
+
+    // ===================== 深链 PDF 占位封面策略（B1） =====================
 
     /**
-     * 生成封面 content:// 直链（WebDavCoverProvider）。Coil 加载该 URI 时在可见项
-     * 才触发一次带鉴权下载，天然懒加载、不阻塞列表；详情页也走同一条通道。
+     * SY --> B1（2026-09-28）PDF 封面策略。完整实现已上提到 [BaseWebDavSource.handlePdfDeepChainCover]
+     * （2026-10-05，网盘源 115/夸克共用同一套逻辑），这里只做委托。
+     * SY <--
      */
-    private fun coverContentUri(mangaUrl: String): String =
-        "content://${WebDavCoverBridge.COVER_AUTHORITY}/${Uri.encode(mangaUrl)}"
+    override suspend fun tryHandlePdfCoverLocally(
+        targetPath: String,
+        baseName: String,
+        title: String,
+        coverFile: File,
+    ): Boolean {
+        // SY 2026-10-06：网盘挂载目录 → 委托网盘后端的深链策略（占位图写共享 fallback 目录，键含前缀，互不冲突）
+        netdiskFor(targetPath)?.let {
+            return it.delegateTryHandlePdfCoverLocally(innerPath(targetPath), baseName, title, coverFile)
+        }
+        return handlePdfDeepChainCover(targetPath, baseName, title, coverFile)
+    }
+
+    override fun hasPlaceholderCover(base: String): Boolean =
+        WebDavCoverStore.fallbackCoverFile(context, base).exists()
+
+    override suspend fun isDeepChainPdfOrPlaceholder(remotePath: String): Boolean {
+        netdiskFor(remotePath)?.let {
+            return runCatching { it.delegateIsDeepChainPdfOrPlaceholder(innerPath(remotePath)) }.getOrDefault(false)
+        }
+        return runCatching { isRemotePdfDeepChain(remotePath) }.getOrDefault(false)
+    }
+
+    /** SY 2026-10-06：网盘挂载目录的章节 id 无扩展名，真实文件名委托网盘后端解析（ChapterLoader 分流用）。 */
+    override suspend fun fileNameOf(url: String): String {
+        netdiskFor(url)?.let { return it.fileNameOf(innerPath(url)) }
+        return super.fileNameOf(url)
+    }
+
+    /** SY 2026-10-06：网盘挂载目录的整本缓存落在网盘自己的归档目录，查询重定向（修「读后补封面」兜底失效）。 */
+    override fun cachedArchiveFile(remotePath: String): File? {
+        netdiskFor(remotePath)?.let { return it.delegateCachedArchiveFile(innerPath(remotePath)) }
+        return super.cachedArchiveFile(remotePath)
+    }
+
+    // ===================== 远端独有：PDF 流式路由 =====================
+
+    /** 共用的 Range 随机读源工厂：流式章节（zip/cbz、pdf）都从这里出。 */
+    private fun newRangeSource(config: CloudSyncConfig, remotePath: String): WebDavRandomAccessSource =
+        WebDavRandomAccessSource(
+            url = cloudSyncService.resolveFileUrl(config, remotePath),
+            username = config.username,
+            password = config.password,
+            fallbackCacheDir = File(context.cacheDir, FALLBACK_SUBDIR),
+            cacheMaxBytes = FALLBACK_CACHE_BYTES,
+        )
+
+    // SY --> 2026-10-05：openPdfChapter / PdfChapterHandle / cachedArchiveFile / isDeepChainPdf /
+    // extractPdfFirstPageFromLocal 已上提到 BaseWebDavSource（网盘源 115/夸克共用同一套逻辑）。
+
+    // ===================== 文件夹视图：云端目录列表 + 添加 =====================
+
+    /** 文件夹视图的云端目录列表：默认 destination 在前，外加用户添加的额外目录。 */
+    private fun getWebDavFolders(): List<String> {
+        val destination = normalizePath(downloadPreferences.cloudSyncDestination.get())
+        val extras = downloadPreferences.cloudSyncFolders.get()
+            .map { normalizePath(it) }
+            .filter { it.isNotBlank() && it != destination }
+        return (listOf(destination) + extras).filter { it.isNotBlank() }.distinct()
+    }
+
+    override suspend fun addFolder(identifier: String): Boolean {
+        val path = normalizePath(identifier)
+        if (path.isBlank()) return false
+        val destination = normalizePath(downloadPreferences.cloudSyncDestination.get())
+        val current = downloadPreferences.cloudSyncFolders.get()
+        if (path == destination || path in current) return false
+        // 校验远端目录存在（PROPFIND 失败即视为无效路径）
+        val (config, _) = configOrNull() ?: return false
+        val exists = runCatching { cloudSyncService.listDirectories(config, path) }.isSuccess
+        if (!exists) return false
+        downloadPreferences.cloudSyncFolders.set(current + path)
+        return true
+    }
 
     companion object {
         /** 与 LocalSource.ID=0 区分；选一个不易与扩展源 id 冲突的固定值。 */
         const val ID = -20_260_924L
 
+        /** 散图文件夹章节的 url 标记（与 ChapterLoader 共用，见 BaseWebDavSource）。 */
+        const val IMG_FOLDER_MARKER = BaseWebDavSource.IMG_FOLDER_MARKER
+
         private const val CACHE_SUBDIR = "webdav-archives"
+
+        /**
+         * [CACHE_SUBDIR] 磁盘预算：1GB，超限按 LRU 淘汰。
+         * 该目录存的是「整本下载」的章节（pdf/epub/tar/rar/7z 等；zip/cbz 已改走 Range 流式）。
+         * 修前此目录**无上限无淘汰**，实测仅 11 个文件就累积 1.2G。PDF 走 Range 反而更慢
+         * （pdfium 打开时会通读全文件，实测 31.4s vs 整本 11.4s），所以只能靠预算兜底。
+         */
+        private const val ARCHIVE_CACHE_BYTES = 1L * 1024 * 1024 * 1024
+
+        /** 流式读整本回退（非 Range 服务器 / rar·7z 等）的磁盘缓存目录。 */
+        private const val FALLBACK_SUBDIR = "webdav-stream"
+
+        /** 整本回退磁盘缓存上限：4GB，超限按 LRU 淘汰其它整本。 */
+        private const val FALLBACK_CACHE_BYTES = 4L * 1024 * 1024 * 1024
+
+        /** 散图文件夹单张图片的磁盘缓存目录。 */
+        private const val IMG_CACHE_SUBDIR = "webdav-images"
+
+        /**
+         * [IMG_CACHE_SUBDIR] 磁盘预算：256MB，超限按 LRU 淘汰。散图单张 1–3MB，256MB 足够滚读若干话。
+         */
+        private const val IMG_CACHE_BYTES = 256L * 1024 * 1024
+
+        // SY --> 2026-10-05：PDF 封面/链长探测常量已随逻辑上提到 BaseWebDavSource。
     }
 }

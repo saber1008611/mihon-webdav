@@ -12,4 +12,6 @@ data class Backup(
     @ProtoNumber(104) var backupPreferences: List<BackupPreference> = emptyList(),
     @ProtoNumber(105) var backupSourcePreferences: List<BackupSourcePreferences> = emptyList(),
     @ProtoNumber(106) var backupExtensionStores: List<BackupExtensionStore> = emptyList(),
+    // SY specific values（兼容云端同步备份；mihonW 无「保存的搜索」功能，恒为空）
+    @ProtoNumber(600) var backupSavedSearches: List<BackupSavedSearch> = emptyList(),
 )

@@ -95,6 +95,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
     @Inject private lateinit var migrations: Set<Migration>
 
+    @Inject private lateinit var syncPreferences: eu.kanade.domain.sync.SyncPreferences
+
     private val disableIncognitoReceiver = DisableIncognitoReceiver()
 
     @SuppressLint("LaunchActivityFromNotification")
@@ -187,6 +189,13 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             LogcatLogger.loggers += AndroidLogcatLogger(minLogPriority)
         }
 
+        // SY --> 阿里云盘双向备份同步：应用启动时同步
+        val syncTriggerOpt = syncPreferences.getSyncTriggerOptions()
+        if (syncPreferences.isSyncEnabled() && syncTriggerOpt.syncOnAppStart) {
+            eu.kanade.tachiyomi.data.sync.SyncDataJob.startNow(this)
+        }
+        // SY <--
+
         initializeMigrator()
     }
 
@@ -242,6 +251,13 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
     override fun onStart(owner: LifecycleOwner) {
         SecureActivityDelegate.onApplicationStart(this)
+
+        // SY --> 阿里云盘双向备份同步：应用回到前台时同步
+        val syncTriggerOpt = syncPreferences.getSyncTriggerOptions()
+        if (syncPreferences.isSyncEnabled() && syncTriggerOpt.syncOnAppResume) {
+            eu.kanade.tachiyomi.data.sync.SyncDataJob.startNow(this)
+        }
+        // SY <--
     }
 
     override fun onStop(owner: LifecycleOwner) {

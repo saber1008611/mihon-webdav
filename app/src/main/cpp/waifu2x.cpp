@@ -1159,10 +1159,12 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
         const bool recent_interaction =
             continuous_mode &&
             (now_ms - last_interaction_ms.load()) < recent_interaction_window_ms();
+        // SY 2026-09-29：cool_sleep_ms 是「只降温、不动批量」的独立小睡（整话超分用）。
+        const int scroll_yield_now = recent_interaction ? scroll_yield_ms_for(submit_us) : 0;
         const int effective_sleep =
             tile_sleep_ms > 0
                 ? tile_sleep_ms
-                : (recent_interaction ? scroll_yield_ms_for(submit_us) : 0);
+                : std::max(cool_sleep_ms, scroll_yield_now);
         // SY --> 2026-09-23 方案D 可选档：滚动期强制 batch=1（对下一次提交生效），
         // 把单次 submit 阻塞时长压到最小 —— 一次提交阻塞 40ms+ 本身就够吃掉好几个帧预算。
         if (recent_interaction && scroll_force_batch1()) {
@@ -1813,10 +1815,12 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
       const bool recent_interaction_staged =
           continuous_mode &&
           (now_ms_staged - last_interaction_ms.load()) < recent_interaction_window_ms();
+      const int scroll_yield_staged =
+          recent_interaction_staged ? scroll_yield_ms_for(0) : 0;
       const int effective_sleep_staged =
           tile_sleep_ms > 0
               ? tile_sleep_ms
-              : (recent_interaction_staged ? scroll_yield_ms_for(0) : 0);
+              : std::max(cool_sleep_ms, scroll_yield_staged);
       if (effective_sleep_staged > 0 && !is_near_end) {
         std::this_thread::sleep_for(std::chrono::milliseconds(effective_sleep_staged));
       }

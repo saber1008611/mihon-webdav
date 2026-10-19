@@ -70,6 +70,14 @@ class MangaRepositoryImpl(
             .awaitAsList()
     }
 
+    // SY --> 2026-09-29 Part 2：按源取全部漫画（阅读器「接下一部」用，见 mangas.sq 注释）。
+    override suspend fun getMangasBySource(sourceId: Long): List<Manga> {
+        return database.mangasQueries
+            .getMangasBySource(sourceId, MangaMapper::mapManga)
+            .awaitAsList()
+    }
+    // SY <--
+
     override suspend fun getLibraryManga(): List<LibraryManga> {
         return database.libraryViewQueries
             .library(MangaMapper::mapLibraryManga)

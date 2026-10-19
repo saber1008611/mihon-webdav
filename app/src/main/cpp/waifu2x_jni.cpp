@@ -813,15 +813,17 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeNotifyInteraction(
 
 extern "C" JNIEXPORT void JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeUpdatePerformanceConfig(
-    JNIEnv *env, jobject thiz, jint sleep_ms, jint tile_size) {
+    JNIEnv *env, jobject thiz, jint sleep_ms, jint tile_size, jint cool_sleep_ms) {
   std::lock_guard<std::mutex> lock(g_lock);
   if (g_waifu2x) {
     g_waifu2x->tile_sleep_ms = sleep_ms;
+    // SY 2026-09-29：独立降温小睡（不影响 batch_capacity）。见 waifu2x.h 里 cool_sleep_ms 注释。
+    g_waifu2x->cool_sleep_ms = cool_sleep_ms < 0 ? 0 : cool_sleep_ms;
     // SY --> Komiho Phase11: 走 set_tilesize 这个唯一入口，由它按 GPU 显存预算
     // 收敛上限（低显存机型上用户手选的 256 会被压回，避免 OOM）。
     g_waifu2x->set_tilesize(tile_size);
     // SY <--
-    LOGD("Updated performance config: sleep=%dms, tilesize=%d", sleep_ms,
-         g_waifu2x->tilesize);
+    LOGD("Updated performance config: sleep=%dms, tilesize=%d, coolSleep=%dms", sleep_ms,
+         g_waifu2x->tilesize, g_waifu2x->cool_sleep_ms);
   }
 }

@@ -18,6 +18,20 @@ abstract class PageLoader {
     abstract var isLocal: Boolean
 
     /**
+     * SY --> 2026-09-28：该加载器的「额外预绑定页数」建议。
+     *
+     * 条漫（[WebtoonViewer]）的 RecyclerView 预绑定窗口决定「离屏多少页就开始 bind → loadPage」。
+     * 对**本地**加载器（本地文件拷贝，几 ms 就绪）很小的窗口就够；
+     * 对**网络**加载器（WebDAV 逐张 HTTP 下载，单张 50~200ms+）必须把窗口拉得足够远，
+     * 让下载跑在用户滑到之前 —— 否则就是「未缓存 WebDAV 滑动掉帧 + 停下半秒才出图」。
+     *
+     * 默认 0 = 不额外放大（本地/归档等加载器保持现状，避免无谓的离屏贴图）。
+     * 网络加载器可覆盖为 >0 的值（单位：页）。
+     * SY <--
+     */
+    open val preloadDistanceExtra: Int = 0
+
+    /**
      * Returns the list of pages of a chapter.
      */
     abstract suspend fun getPages(): List<ReaderPage>
@@ -34,17 +48,6 @@ abstract class PageLoader {
      * online source is used.
      */
     open fun retryPage(page: ReaderPage) {}
-
-    /**
-     * SY --> 整话超分（从 mihon_img_upscale 移植）：把本章**尚未就绪**的页全部送入
-     * 加载 + 后台超分队列，使整章每一页都被超分并落盘缓存，而不只是用户滑到的几页。
-     *
-     * 默认空实现：只有需要「整章批量」触发的子类才重写 —— 网络源（HttpPageLoader）、
-     * 已下载源（DownloadPageLoader）、归档源（ArchivePageLoader，服务本地 CBZ 与 WebDAV）。
-     * 调用方（ReaderViewModel）负责判断开关是否打开、是否在阅读器内生效。
-     * SY <--
-     */
-    open fun enqueueAllPagesForEnhancement() {}
 
     /**
      * Recycles this loader. Implementations must override this method to clean up any active

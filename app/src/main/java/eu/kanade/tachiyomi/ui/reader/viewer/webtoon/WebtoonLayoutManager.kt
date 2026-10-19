@@ -13,10 +13,21 @@ import androidx.recyclerview.widget.RecyclerView.NO_POSITION
  * This layout manager uses the same package name as the support library in order to use a package
  * protected method.
  */
-class WebtoonLayoutManager(context: Context, private val extraLayoutSpace: Int) : LinearLayoutManager(context) {
+class WebtoonLayoutManager(context: Context, private var extraLayoutSpace: Int) : LinearLayoutManager(context) {
 
     init {
         isItemPrefetchEnabled = false
+    }
+
+    /**
+     * SY --> 2026-09-28：允许阅读器按「当前加载器」动态调整预绑定窗口。
+     * 本地源保持小窗口；网络源（WebDAV 逐张下载）放大，让下载跑在滑动前面。
+     * 调整后重建布局使其立即生效。
+     */
+    fun setExtraLayoutSpace(space: Int) {
+        if (space == extraLayoutSpace) return
+        extraLayoutSpace = space
+        requestLayout()
     }
 
     /**

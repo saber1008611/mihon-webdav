@@ -87,19 +87,4 @@ internal class DownloadPageLoader(
         }
         // SY <--
     }
-
-    // SY --> 整话超分：已下载章节的页都是 Ready 状态（无需联网拉取），
-    // 直接逐页触发 enhance() 即可；enhance() 内部的 isCached/pendingRequests 闸门会去重，
-    // 已算过 / 正在算的页不会白算。
-    override fun enqueueAllPagesForEnhancement() {
-        if (readerPreferencesOrNull?.realCuganWholeChapter()?.get() != true) return
-        val pages = chapter.pages ?: return
-        pages.forEach { page ->
-            runCatching { ImageEnhancer.enhance(context, page, highPriority = false) }
-        }
-        logcat(LogPriority.DEBUG) {
-            "DownloadPageLoader: whole-chapter enhancement enqueued ${pages.size} pages"
-        }
-    }
-    // SY <--
 }

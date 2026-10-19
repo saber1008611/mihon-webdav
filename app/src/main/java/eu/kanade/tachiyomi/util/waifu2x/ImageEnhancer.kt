@@ -621,6 +621,27 @@ object ImageEnhancer {
         publishStatus()
     }
 
+    /**
+     * SY --> 显式设定「用户当前所在页」（0-based）。
+     *
+     * 与 [reprioritizeAround] 的区别：这里**只改目标页，不动队列**（不做抢占/提权）。
+     * 用途是「**整本超分的起始页**」：整章批量入队发生在 `loadChapter` 里，
+     * 那一刻视图还没上报页码，`targetPageIndex` 可能还停在 0 —— 若不先把它定到
+     * 「用户实际要开始读的那一页」，整章批量就会从第 1 页排起，
+     * 把用户早已看过的页全部重算一遍（用户反馈：「整本超分也去掉前面已经看过的，只从当前页往后」）。
+     *
+     * [pageIndex] < 0 时忽略（调用方可能还没拿到有效位置）。
+     * SY <--
+     */
+    fun setTargetPage(pageIndex: Int, pageVariant: String = "") {
+        if (pageIndex < 0) return
+        targetPageIndex = pageIndex
+        targetPageVariant = pageVariant
+        targetSecondaryPageIndex = -1
+        targetSecondaryPageVariant = ""
+        logcat(LogPriority.DEBUG) { "ImageEnhancer: target page set to $pageIndex" }
+    }
+
     /** 这一页是否就是用户当前在读的页（含双页模式的副页）。 */
     fun isTargetPage(pageIndex: Int, pageVariant: String = ""): Boolean {
         return isFocusedTarget(pageIndex, pageVariant)

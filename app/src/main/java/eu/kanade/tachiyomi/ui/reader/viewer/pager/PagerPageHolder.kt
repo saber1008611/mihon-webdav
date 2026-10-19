@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.view.LayoutInflater
 import androidx.core.view.isVisible
 import eu.kanade.presentation.util.formattedMessage
@@ -13,10 +15,13 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.enhanceKey
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+import eu.kanade.tachiyomi.util.system.isNightMode
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import logcat.LogPriority
@@ -32,19 +37,22 @@ import tachiyomi.i18n.MR
 
 /**
  * View of the ViewPager that contains a page of a chapter.
+ *
+ * SY 2026-10-09 双页移植：[extraPage] 非空时这一屏要同时显示两页（左右拼成一张图）。
  */
 @SuppressLint("ViewConstructor")
 class PagerPageHolder(
     readerThemedContext: Context,
     val viewer: PagerViewer,
     val page: ReaderPage,
+    private var extraPage: ReaderPage? = null,
 ) : ReaderPageImageView(readerThemedContext), ViewPagerAdapter.PositionableView {
 
     /**
      * Item that identifies this view. Needed by the adapter to not recreate views.
      */
     override val item
-        get() = page
+        get() = page to extraPage
 
     /**
      * Loading progress bar to indicate the current progress.
@@ -100,23 +108,39 @@ class PagerPageHolder(
      */
     private suspend fun loadPageAndProcessStatus() {
         val loader = page.chapter.pageLoader ?: return
+        val extra = extraPage
 
         supervisorScope {
             launchIO {
                 loader.loadPage(page)
             }
-            page.statusFlow.collectLatest { state ->
-                when (state) {
-                    Page.State.Queue -> setQueued()
-                    Page.State.LoadPage -> setLoading()
-                    Page.State.DownloadImage -> {
+            // SY --> 双页移植：第二页也要走 loader 才会真正开始下载
+            if (extra != null) {
+                launchIO {
+                    (extra.chapter.pageLoader ?: loader).loadPage(extra)
+                }
+            }
+            // SY <--
+
+            val statusFlow = if (extra == null) {
+                page.statusFlow.map { it to Page.State.Ready }
+            } else {
+                combine(page.statusFlow, extra.statusFlow) { first, second -> first to second }
+            }
+
+            statusFlow.collectLatest { (first, second) ->
+                when {
+                    first is Page.State.Error -> setError(first.error)
+                    second is Page.State.Error -> setError(second.error)
+                    first == Page.State.Queue || second == Page.State.Queue -> setQueued()
+                    first == Page.State.LoadPage || second == Page.State.LoadPage -> setLoading()
+                    first == Page.State.DownloadImage || second == Page.State.DownloadImage -> {
                         setDownloading()
                         page.progressFlow.collectLatest { value ->
                             progressIndicator?.setProgress(value)
                         }
                     }
-                    Page.State.Ready -> setImage()
-                    is Page.State.Error -> setError(state.error)
+                    first == Page.State.Ready && second == Page.State.Ready -> setImage()
                 }
             }
         }
@@ -156,19 +180,35 @@ class PagerPageHolder(
         progressIndicator?.setProgress(0)
 
         val streamFn = page.stream ?: return
+        val extra = extraPage
 
         try {
             val (source, isAnimated, background) = withIOContext {
-                val source = streamFn().use { process(item, Buffer().readFrom(it)) }
-                val isAnimated = ImageUtil.isAnimatedAndSupported(source)
-                val background = if (!isAnimated && viewer.config.automaticBackground) {
-                    ImageUtil.chooseBackground(context, source.peek().inputStream())
+                if (extra == null) {
+                    val source = streamFn().use { process(page, Buffer().readFrom(it)) }
+                    val isAnimated = ImageUtil.isAnimatedAndSupported(source)
+                    val background = if (!isAnimated && viewer.config.automaticBackground) {
+                        ImageUtil.chooseBackground(context, source.peek().inputStream())
+                    } else {
+                        null
+                    }
+                    Triple(source, isAnimated, background)
                 } else {
-                    null
+                    // SY --> 双页移植：两页合成一张图
+                    val primary = streamFn().use { process(page, Buffer().readFrom(it)) }
+                    val secondary = extra.stream?.invoke()?.use { process(extra, Buffer().readFrom(it)) }
+                    if (secondary == null) {
+                        Triple(primary, false, null)
+                    } else {
+                        Triple(mergeOrSplitPages(primary, secondary), false, null)
+                    }
+                    // SY <--
                 }
-                Triple(source, isAnimated, background)
             }
             withUIContext {
+                // SY --> 合成/变换后的图与增强缓存对不上，这些模式退回原图显示
+                val enhancedDisplayAvailable = !usesTransformedEnhancedDisplay()
+                // SY <--
                 setImage(
                     source,
                     isAnimated,
@@ -180,7 +220,18 @@ class PagerPageHolder(
                         landscapeZoom = viewer.config.landscapeZoom,
                     ),
                     // SY --> 超分移植：开启增强时把这一页在缓存里的定位信息传下去
-                    enhanceKey = item.enhanceKey(viewer.config.enhanceEnabled),
+                    enhanceKey = if (enhancedDisplayAvailable) {
+                        page.enhanceKey(viewer.config.enhanceEnabled)
+                    } else {
+                        null
+                    },
+                    // 数据源必须一并传下去：enqueueEnhancement 取数据的优先级是
+                    // streamFn → readerPage → 否则直接 return。翻页模式此前只传了
+                    // enhanceKey，streamFn/readerPage 都是 null，于是「单点画面增强」
+                    // 入队即被丢弃，只有 loader 里的「整话超分」按钮能触发增强。
+                    // 对齐 WebtoonPageHolder 的做法，把本页的流与 ReaderPage 都透传。
+                    streamFn = if (enhancedDisplayAvailable) page.stream else null,
+                    readerPage = if (enhancedDisplayAvailable) page else null,
                     // SY <--
                 )
                 if (!isAnimated) {
@@ -202,15 +253,68 @@ class PagerPageHolder(
     // 「未变换的整页」——直接换图会导致几何/内容对不上。这些模式下退回原图路径，
     // 只影响开了增强 + 同时开了双页模式的用户，且是「不增强」而非「错增强」。
     private fun usesTransformedEnhancedDisplay(): Boolean {
-        return viewer.config.dualPageSplit || viewer.config.dualPageRotateToFit
+        // 双页合成后显示的是「两页拼出来的图」，与原图不是同一张，增强缓存对不上
+        return extraPage != null || viewer.config.dualPageSplit || viewer.config.dualPageRotateToFit
     }
     // SY <--
 
-    private fun process(page: ReaderPage, imageSource: BufferedSource): BufferedSource {        if (viewer.config.dualPageRotateToFit) {
+    /**
+     * SY 2026-10-09 双页移植：把左右两页拼成一张图。
+     *
+     * 若其中一页本身就是跨页大图（宽页），双页模式下它应独占一屏 —— 上报给 adapter
+     * 重新配对，本屏先按单页显示。
+     */
+    private fun mergeOrSplitPages(imageSource: BufferedSource, imageSource2: BufferedSource): BufferedSource {
+        if (viewer.config.doublePages) {
+            if (ImageUtil.isWideImage(imageSource)) {
+                viewer.onWidePageDetected(page)
+                return imageSource
+            }
+            if (ImageUtil.isWideImage(imageSource2)) {
+                extraPage?.let { viewer.onWidePageDetected(it) }
+                return imageSource2
+            }
+        }
+
+        val bitmap1 = BitmapFactory.decodeStream(imageSource.inputStream())
+        val bitmap2 = BitmapFactory.decodeStream(imageSource2.inputStream())
+        if (bitmap1 == null || bitmap2 == null) {
+            bitmap1?.recycle()
+            bitmap2?.recycle()
+            return imageSource
+        }
+
+        val isLTR = viewer !is R2LPagerViewer
+        val grayBackground = Color.rgb(0x20, 0x21, 0x25)
+        val background = when (viewer.config.theme) {
+            0 -> Color.WHITE
+            2 -> grayBackground
+            3 -> if (context.isNightMode()) grayBackground else Color.WHITE
+            else -> Color.BLACK
+        }
+
+        return try {
+            ImageUtil.mergeBitmaps(bitmap1, bitmap2, isLTR, background)
+        } finally {
+            bitmap1.recycle()
+            bitmap2.recycle()
+        }
+    }
+
+    /**
+     * SY 2026-10-09：只有在「单页模式 + 开了拆分宽页」时才拆宽页。
+     * 双页模式下宽页应当独占一屏（由 adapter 的 fullPage 逻辑处理）。
+     */
+    private fun shouldSplitWidePagesInSinglePageMode(): Boolean {
+        return !viewer.config.doublePages && viewer.config.autoSplitPages
+    }
+
+    private fun process(page: ReaderPage, imageSource: BufferedSource): BufferedSource {
+        if (viewer.config.dualPageRotateToFit) {
             return rotateDualPage(imageSource)
         }
 
-        if (!viewer.config.dualPageSplit) {
+        if (!shouldSplitWidePagesInSinglePageMode()) {
             return imageSource
         }
 

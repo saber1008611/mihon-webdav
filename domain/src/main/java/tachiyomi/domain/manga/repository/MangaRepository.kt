@@ -20,6 +20,12 @@ interface MangaRepository {
 
     suspend fun getReadMangaNotInLibrary(): List<Manga>
 
+    /**
+     * SY 2026-09-29 Part 2：某源下的全部漫画（含未加入书架的）。
+     * 阅读器「本作读完 → 接下一部」需要它：云盘/本地图源里绝大多数漫画并不在书架里。
+     */
+    suspend fun getMangasBySource(sourceId: Long): List<Manga>
+
     suspend fun getLibraryManga(): List<LibraryManga>
 
     fun getLibraryMangaAsFlow(): Flow<List<LibraryManga>>

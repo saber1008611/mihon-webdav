@@ -180,6 +180,17 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <activity
+            android:name=".ui.setting.track.AliyunPanQrLoginActivity"
+            android:exported="false"
+            android:label="@string/pref_aliyun_pan_sign_in" />
+
+        <!-- SY 2026-10-05：夸克网盘扫码登录 -->
+        <activity
+            android:name=".ui.setting.track.QuarkQrLoginActivity"
+            android:exported="false"
+            android:label="夸克网盘登录" />
+
+        <activity
             android:name=".ui.setting.track.TrackLoginActivity"
             android:exported="true"
             android:label="@string/track_activity_name">
@@ -236,14 +247,39 @@
         <!-- 路线 A 方案 1 的 WebDAV 封面按需下载通道（content:// 由 Coil 在网格项可见时触发下载） -->
         <provider
             android:name="eu.kanade.tachiyomi.source.webdav.WebDavCoverProvider"
-            android:authorities="eu.kanade.tachiyomi.webdav.cover"
+            android:authorities="app.mihonW.webdav.cover"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <!-- 本地文件夹版 WebDAV 图源封面按需下载通道（LocalWebDavSource 的 content:// 后端） -->
+        <provider
+            android:name="eu.kanade.tachiyomi.source.webdav.LocalWebDavCoverProvider"
+            android:authorities="app.mihonW.localwebdav.cover"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <!-- SY 2026-10-05：网盘源（115 / 夸克）封面按需下载通道 —— 复用 WebDavCoverProvider 类，按 authority 路由 -->
+        <provider
+            android:name="eu.kanade.tachiyomi.source.webdav.WebDavCoverProvider"
+            android:authorities="app.mihonW.quark.cover"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+        <provider
+            android:name="eu.kanade.tachiyomi.source.webdav.WebDavCoverProvider"
+            android:authorities="app.mihonW.aliyun.cover"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+        <!-- SY 2026-10-08：115 开放平台（OAuth）源封面通道 -->
+        <provider
+            android:name="eu.kanade.tachiyomi.source.webdav.WebDavCoverProvider"
+            android:authorities="app.mihonW.cloud115open.cover"
             android:exported="false"
             android:grantUriPermissions="true" />
 
         <!-- 本地图源封面懒加载通道（content:// 由 Coil 在网格项滑到可见时触发 LocalCoverManager.find） -->
         <provider
             android:name="tachiyomi.source.local.LocalCoverProvider"
-            android:authorities="eu.kanade.tachiyomi.local.cover"
+            android:authorities="app.mihonW.local.cover"
             android:exported="false"
             android:grantUriPermissions="true" />
 

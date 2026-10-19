@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import logcat.LogPriority
 import mihon.app.di.appGraph
 import tachiyomi.core.common.util.system.logcat
 import kotlin.math.min
@@ -64,6 +65,14 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private var currentPage: Any? = null
 
+    // SY --> 2026-10-09 双页移植
+    /** 当前正在读的页（双页模式下是配对中的「先读」那一页）。 */
+    private var currentReaderPage: ReaderPage? = null
+
+    /** 由 adapter 指定、切换后优先采用的当前页。 */
+    private var pendingSelectedPage: ReaderPage? = null
+    // SY <--
+
     /**
      * Viewer chapters to set when the pager enters idle mode. Otherwise, if the view was settling
      * or dragging, there'd be a noticeable and annoying jump.
@@ -105,7 +114,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.isVisible = false // Don't layout the pager yet
         pager.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         pager.isFocusable = false
-        pager.offscreenPageLimit = 1
+        // SY 2026-09-29：恢复基线语义——「预载页数」在翻页模式下 = 离屏页数
+        // （预绑定 + 预超分往后 N 页）；超分关闭时保持本 fork 原值 1。
+        pager.offscreenPageLimit = resolveOffscreenPageLimit()
         pager.id = R.id.reader_pager
         pager.adapter = adapter
         pager.addOnPageChangeListener(pagerListener)
@@ -128,7 +139,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
         pager.longTapListener = f@{
             if (activity.viewModel.state.value.menuVisible || config.longTapEnabled) {
-                val item = adapter.items.getOrNull(pager.currentItem)
+                val item = adapter.joinedItems.getOrNull(pager.currentItem)?.first
                 if (item is ReaderPage) {
                     activity.onPageLongTap(item)
                     return@f true
@@ -147,6 +158,12 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             refreshAdapter()
         }
 
+        // SY --> 双页移植：页面布局变化时按新的配对方式重整当前话
+        config.reloadChapterListener = {
+            activity.viewModel.state.value.viewerChapters?.let(::setChapters)
+        }
+        // SY <--
+
         config.navigationModeChangedListener = {
             val showOnStart = config.navigationOverlayOnStart || config.forceNavigationOverlay
             activity.binding.navigationOverlay.setNavigation(config.navigator, showOnStart)
@@ -155,6 +172,12 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     override fun destroy() {
         super.destroy()
+        // SY --> 2026-09-29：同 `WebtoonViewer.destroy()` 的 OOM 修复 —— 卸掉 adapter。
+        // `ViewPager` 的 `mItems`(ItemInfo.object) 会长时间持有各页 holder，而 holder 持有
+        // `viewer`（`PagerPageHolder(viewer = ...)`）⇒ 只 `scope.cancel()` 时，旧 viewer
+        // 与其页位图会一直等到 GC 才可能释放；连续「原地换书」就会整份泄漏。
+        // 置 null 会走 PagerAdapter 的销毁流程并丢掉 mItems，让旧 viewer 立刻可回收。
+        runCatching { pager.adapter = null }
         scope.cancel()
     }
 
@@ -176,33 +199,54 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun getPageHolder(page: ReaderPage): PagerPageHolder? =
         pager.children
             .filterIsInstance(PagerPageHolder::class.java)
-            .firstOrNull { it.item == page }
+            .firstOrNull {
+                isSameDisplayedPage(it.item.first as? ReaderPage, page) ||
+                    isSameDisplayedPage(it.item.second as? ReaderPage, page)
+            }
 
     /**
      * Called when a new page (either a [ReaderPage] or [ChapterTransition]) is marked as active
      */
     private fun onPageChange(position: Int) {
-        val page = adapter.items.getOrNull(position)
-        if (page != null && currentPage != page) {
-            val allowPreload = checkAllowPreload(page as? ReaderPage)
+        val item = adapter.joinedItems.getOrNull(position) ?: return
+        val preferredReaderPage = pendingSelectedPage?.takeIf { selected ->
+            isSameDisplayedPage(item.first as? ReaderPage, selected) ||
+                isSameDisplayedPage(item.second as? ReaderPage, selected)
+        }
+        val retainedReaderPage = currentReaderPage?.takeIf { selected ->
+            isSameDisplayedPage(item.first as? ReaderPage, selected) ||
+                isSameDisplayedPage(item.second as? ReaderPage, selected)
+        }
+        val activeItem = preferredReaderPage
+            ?: retainedReaderPage
+            ?: adapter.getActiveReaderPage(position)
+            ?: item.first
+        if (activeItem != null && currentPage != activeItem) {
+            val allowPreload = checkAllowPreload(activeItem as? ReaderPage)
             val forward = when {
-                currentPage is ReaderPage && page is ReaderPage -> {
+                currentPage is ReaderPage && activeItem is ReaderPage -> {
                     // if both pages have the same number, it's a split page with an InsertPage
-                    if (page.number == (currentPage as ReaderPage).number) {
+                    if (activeItem.number == (currentPage as ReaderPage).number) {
                         // the InsertPage is always the second in the reading direction
-                        page is InsertPage
+                        activeItem is InsertPage
                     } else {
-                        page.number > (currentPage as ReaderPage).number
+                        activeItem.number > (currentPage as ReaderPage).number
                     }
                 }
-                currentPage is ChapterTransition.Prev && page is ReaderPage ->
+                currentPage is ChapterTransition.Prev && activeItem is ReaderPage ->
                     false
                 else -> true
             }
-            currentPage = page
-            when (page) {
-                is ReaderPage -> onReaderPageSelected(page, allowPreload, forward)
-                is ChapterTransition -> onTransitionSelected(page)
+            currentPage = activeItem
+            pendingSelectedPage = null
+            when (activeItem) {
+                is ReaderPage -> onReaderPageSelected(
+                    activeItem,
+                    allowPreload,
+                    item.second is ReaderPage,
+                    forward,
+                )
+                is ChapterTransition -> onTransitionSelected(activeItem)
             }
         }
     }
@@ -230,7 +274,12 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Called when a [ReaderPage] is marked as active. It notifies the
      * activity of the change and requests the preload of the next chapter if this is the last page.
      */
-    private fun onReaderPageSelected(page: ReaderPage, allowPreload: Boolean, forward: Boolean) {
+    private fun onReaderPageSelected(
+        page: ReaderPage,
+        allowPreload: Boolean,
+        hasExtraPage: Boolean,
+        forward: Boolean,
+    ) {
         val pages = page.chapter.pages ?: return
         logcat { "onReaderPageSelected: ${page.number}/${pages.size}" }
         // SY --> 目标页必须由 Viewer 统一上报，Holder 已关闭自行上报
@@ -238,6 +287,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView.currentGlobalPageIndex = page.index
         eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.reprioritizeAround(page.index)
         // SY <--
+        currentReaderPage = page
         activity.onPageSelected(page)
 
         // Notify holder of page change
@@ -267,6 +317,11 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             logcat { "Request preload destination chapter because we're on the transition" }
             activity.requestPreloadChapter(toChapter)
         } else if (transition is ChapterTransition.Next) {
+            // SY --> 2026-09-29 Part 2：本作已读完（没有下一话）⇒ 请求衔接下一部漫画
+            // （同文件夹优先 → 书架兜底，自动打开）。
+            logcat(LogPriority.INFO) { "PagerViewer: 已到本作末尾（无下一话）→ 请求衔接下一部" }
+            activity.requestNextMangaOnFinish()
+            // SY <--
             // No more chapters, show menu because the user is probably going to close the reader
             activity.showMenu()
         }
@@ -292,14 +347,25 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.removeOnPageChangeListener(pagerListener)
 
         val forceTransition = config.alwaysShowChapterTransition ||
-            adapter.items.getOrNull(pager.currentItem) is ChapterTransition
-        adapter.setChapters(chapters, forceTransition)
+            adapter.joinedItems.getOrNull(pager.currentItem)?.first is ChapterTransition
+        // SY --> 双页移植：以当前正在读的页为锚点重整配对，避免跳页
+        val anchorPage = getCurrentReaderPage()
+        logcat {
+            "PagerViewer.setChaptersInternal: requestedPage=${chapters.currChapter.requestedPage}, " +
+                "anchor=${anchorPage?.number}/${anchorPage?.index}, currentItem=${pager.currentItem}, " +
+                "doublePages=${config.doublePages}"
+        }
+        adapter.setChapters(chapters, forceTransition, anchorPage)
+        val positionWasRestored = adapter.restoredPosition
+        // SY <--
 
         // Layout the pager once a chapter is being set
         if (pager.isGone) {
             logcat { "Pager first layout" }
-            val pages = chapters.currChapter.pages ?: return
-            moveToPage(pages[min(chapters.currChapter.requestedPage, pages.lastIndex)])
+            if (!positionWasRestored) {
+                val pages = chapters.currChapter.pages ?: return
+                moveToPage(pages[min(chapters.currChapter.requestedPage, pages.lastIndex)])
+            }
             pager.isVisible = true
         }
 
@@ -312,9 +378,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Tells this viewer to move to the given [page].
      */
     override fun moveToPage(page: ReaderPage) {
-        val position = adapter.items.indexOf(page)
+        val position = adapter.getPositionForPage(page)
         if (position != -1) {
             val currentPosition = pager.currentItem
+            pendingSelectedPage = page
             pager.setCurrentItem(position, true)
             // manually call onPageChange since ViewPager listener is not triggered in this case
             if (currentPosition == position) {
@@ -324,6 +391,40 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             logcat { "Page $page not found in adapter" }
         }
     }
+
+    // SY --> 双页移植
+    internal fun setPendingSelectedPage(page: ReaderPage?) {
+        pendingSelectedPage = page
+    }
+
+    fun getCurrentReaderPage(): ReaderPage? {
+        return currentReaderPage ?: when (val active = currentPage) {
+            is InsertPage -> active.parent
+            is ReaderPage -> active
+            else -> null
+        }
+    }
+
+    /** 朝向变化后重算「自动」页面布局（横屏双页 / 竖屏单页）。 */
+    fun refreshAutomaticPageLayout() {
+        val currentPage = getCurrentReaderPage()
+        val oldDoublePages = config.doublePages
+        config.refreshAutomaticPageLayout()
+        if (config.doublePages == oldDoublePages) {
+            currentPage?.let(::moveToPage)
+        }
+    }
+
+    fun onWidePageDetected(page: ReaderPage) {
+        activity.runOnUiThread {
+            adapter.onWidePageDetected(page)
+        }
+    }
+
+    fun hasSplitPage(page: ReaderPage): Boolean {
+        return adapter.hasSplitPage(page)
+    }
+    // SY <--
 
     /**
      * Moves to the next page.
@@ -387,9 +488,26 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private fun refreshAdapter() {
         val currentItem = pager.currentItem
+        // SY 2026-09-29：改「预载页数」后立即重算离屏页数（与 init 保持同一来源）。
+        updateOffscreenPageLimit()
         adapter.refresh()
         pager.adapter = adapter
         pager.setCurrentItem(currentItem, false)
+    }
+
+    /** SY 2026-09-29：「预载页数」→ 翻页模式离屏页数（超分开着时；关闭保持 1）。 */
+    private fun updateOffscreenPageLimit() {
+        val prefs = readerPreferences
+        pager.offscreenPageLimit = if (prefs.realCuganEnabled().get()) {
+            prefs.realCuganPreloadSize().get().coerceIn(1, 8)
+        } else {
+            1
+        }
+    }
+
+    private fun resolveOffscreenPageLimit(): Int {
+        updateOffscreenPageLimit()
+        return pager.offscreenPageLimit
     }
 
     /**

@@ -15,10 +15,19 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
@@ -40,13 +49,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEach
+import androidx.compose.ui.util.fastForEachIndexed
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
@@ -122,6 +137,15 @@ object HomeScreen : Screen() {
 
                 val scope = rememberCoroutineScope()
 
+                // SY --> 2026-10-03 灰调外框
+                // 顶栏总高 = 状态栏 inset + Material3 TopAppBar 的 64dp。
+                // 内容块的四角（手机）与内拐角（平板）靠同色小方块「收」出圆角，
+                // 需要知道顶栏底边落在哪一行，所以在这里算一次。
+                val chromeColor = MaterialTheme.colorScheme.surfaceContainer
+                val cornerSize = 9.dp
+                val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 64.dp
+                // SY <--
+
                 val tabContent: @Composable () -> Unit = {
                     AnimatedContent(
                         targetState = tabNavigator.current,
@@ -142,13 +166,21 @@ object HomeScreen : Screen() {
                 // SY --> 2026-09-25: move navigation rail to the right side on tablet UI
                 if (navigationSuiteType == NavigationSuiteType.NavigationBar) {
                     Scaffold(
+                        // SY --> 顶栏高度对齐：去掉顶层状态栏 inset（只保留底部导航栏），让各 tab 的顶栏从屏幕顶部起算，
+                        // 与本地图源等 root 推入界面单份 inset 一致（避免 tab 内容盒被多推一份状态栏高度）。
+                        contentWindowInsets = WindowInsets.navigationBars,
+                        // SY <--
                         bottomBar = {
                             AnimatedVisibility(
                                 visible = isNavVisible,
                                 enter = expandVertically() + fadeIn(),
                                 exit = shrinkVertically() + fadeOut(),
                             ) {
-                                NavigationBar {
+                                // SY --> 2026-10-03 灰调外框：底部栏 80 → 76dp，底色与页底同为灰
+                                NavigationBar(
+                                    modifier = Modifier.height(76.dp),
+                                    containerColor = chromeColor,
+                                ) {
                                     TABS.fastForEach { tab ->
                                         val selected = tabNavigator.current::class == tab::class
                                         NavigationBarItem(
@@ -165,11 +197,38 @@ object HomeScreen : Screen() {
                                         )
                                     }
                                 }
+                                // SY <--
                             }
                         },
                     ) { paddingValues ->
                         Box(modifier = Modifier.padding(paddingValues)) {
                             tabContent()
+                            // SY --> 内容块四角：同色弧形楔块，把方角「收」成 R9（外圈仍是灰）
+                            CornerFillet(
+                                color = chromeColor,
+                                radius = cornerSize,
+                                scaleX = -1f,
+                                modifier = Modifier.align(Alignment.TopStart).offset(y = topBarHeight),
+                            )
+                            CornerFillet(
+                                color = chromeColor,
+                                radius = cornerSize,
+                                modifier = Modifier.align(Alignment.TopEnd).offset(y = topBarHeight),
+                            )
+                            CornerFillet(
+                                color = chromeColor,
+                                radius = cornerSize,
+                                scaleX = -1f,
+                                scaleY = -1f,
+                                modifier = Modifier.align(Alignment.BottomStart),
+                            )
+                            CornerFillet(
+                                color = chromeColor,
+                                radius = cornerSize,
+                                scaleY = -1f,
+                                modifier = Modifier.align(Alignment.BottomEnd),
+                            )
+                            // SY <--
                         }
                     }
                 } else {
@@ -182,52 +241,72 @@ object HomeScreen : Screen() {
                             enter = expandHorizontally() + fadeIn(),
                             exit = shrinkHorizontally() + fadeOut(),
                         ) {
-                            // SY --> 2026-09-25: narrow custom rail hugging content
-                            // (no default 80dp width / no windowInsets gap -> removes left/right empty space)
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .background(
-                                        MaterialTheme.colorScheme
-                                            .surfaceColorAtElevation(3.dp),
-                                    )
-                                    .padding(vertical = 12.dp),
-                                verticalArrangement = Arrangement.Center,
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                TABS.fastForEach { tab ->
-                                    val selected = tabNavigator.current::class == tab::class
-                                    Box(
-                                        modifier = Modifier
-                                            .padding(vertical = 4.dp)
-                                            .clip(MaterialTheme.shapes.small)
-                                            .background(
-                                                if (selected) {
-                                                    MaterialTheme.colorScheme.secondaryContainer
-                                                } else {
-                                                    Color.Transparent
-                                                },
+                            // SY --> 2026-10-03 灰调外框：窄侧栏（40 → 42dp）+ 图标圆角方片
+                            Box(modifier = Modifier.fillMaxHeight()) {
+                                // 内拐角：内容块右上角用同色小方块「收」出 R9，灰在外圈包住它
+                                CornerFillet(
+                                    color = chromeColor,
+                                    radius = cornerSize,
+                                    modifier = Modifier
+                                        .align(Alignment.TopStart)
+                                        .offset(x = -cornerSize, y = topBarHeight),
+                                )
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .width(42.dp)
+                                        .background(chromeColor)
+                                        .padding(vertical = 12.dp),
+                                    verticalArrangement = Arrangement.Center,
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    TABS.fastForEachIndexed { index, tab ->
+                                        val selected = tabNavigator.current::class == tab::class
+                                        if (index == TABS.lastIndex) {
+                                            // 主分组与「更多」工具组之间的分割线
+                                            Box(
+                                                modifier = Modifier
+                                                    .padding(vertical = 8.dp)
+                                                    .size(width = 22.dp, height = 1.dp)
+                                                    .background(MaterialTheme.colorScheme.outlineVariant),
                                             )
-                                            .clickable(
-                                                onClick = {
-                                                    if (!selected) {
-                                                        tabNavigator.current = tab
-                                                    } else {
-                                                        scope.launch { tab.onReselect(navigator) }
-                                                    }
-                                                },
-                                            )
-                                            .padding(horizontal = 8.dp, vertical = 8.dp),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            NavIcon(tab)
+                                        }
+                                        Column(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable(
+                                                    onClick = {
+                                                        if (!selected) {
+                                                            tabNavigator.current = tab
+                                                        } else {
+                                                            scope.launch { tab.onReselect(navigator) }
+                                                        }
+                                                    },
+                                                )
+                                                .padding(vertical = 4.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(30.dp)
+                                                    .clip(RoundedCornerShape(9.dp))
+                                                    .background(
+                                                        if (selected) {
+                                                            MaterialTheme.colorScheme.secondaryContainer
+                                                        } else {
+                                                            MaterialTheme.colorScheme.surfaceContainerHighest
+                                                        },
+                                                    ),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                NavIcon(tab, size = 18.dp)
+                                            }
                                             NavLabel(tab)
                                         }
                                     }
                                 }
                             }
-                            // SY <-- 2026-09-25
+                            // SY <-- 2026-10-03
                         }
                     }
                 }
@@ -272,20 +351,58 @@ object HomeScreen : Screen() {
         }
     }
 
+    /**
+     * 内容块转角处的「弧形楔块」：在方角上补一块同色的圆弧，让方角看起来变成圆角。
+     * 基形针对方块的**右上角**（灰在右上、浅色在左下），其它三个角用 [scaleX]/[scaleY] 取负镜像。
+     *
+     * ⚠️ 不能用 `RoundedCornerShape`：弧要正好是「正方形的 1/4 圆」，而 Compose 会把
+     * 圆角半径钳到边长的一半，形状会退化成几乎完整的方块 —— 看起来就是「凸出来一块」。
+     */
     @Composable
-    private fun NavIcon(tab: eu.kanade.presentation.util.Tab) {
+    private fun CornerFillet(
+        color: Color,
+        radius: Dp,
+        modifier: Modifier = Modifier,
+        scaleX: Float = 1f,
+        scaleY: Float = 1f,
+    ) {
+        Box(
+            modifier = modifier
+                .size(radius)
+                .scale(scaleX, scaleY)
+                .drawBehind {
+                    val r = size.width
+                    val path = Path().apply {
+                        moveTo(0f, 0f)
+                        lineTo(r, 0f)
+                        lineTo(r, r)
+                        // ⚠️ 圆心必须落在方块的**对角**（左下 (0, r)），弧从 (r, r) 逆时针扫到 (0, 0)。
+                        // 这样弧朝外鼓向方角，浅色块才是「圆角」；
+                        // 若把圆心放在方角本身，弧会朝内凹，浅色块仍是方角、只在角上多一小块灰 —— 就是「凸出来」的样子。
+                        arcTo(Rect(-r, 0f, r, 2f * r), 0f, -90f, false)
+                        close()
+                    }
+                    drawPath(path, color)
+                },
+        )
+    }
+
+    @Composable
+    private fun NavIcon(tab: eu.kanade.presentation.util.Tab, size: Dp = 24.dp) {
         val badge = tabBadge(tab)
         if (badge != null) {
             BadgedBox(badge = { badge() }) {
                 Icon(
                     painter = tab.options.icon!!,
                     contentDescription = tab.options.title,
+                    modifier = Modifier.size(size),
                 )
             }
         } else {
             Icon(
                 painter = tab.options.icon!!,
                 contentDescription = tab.options.title,
+                modifier = Modifier.size(size),
             )
         }
     }

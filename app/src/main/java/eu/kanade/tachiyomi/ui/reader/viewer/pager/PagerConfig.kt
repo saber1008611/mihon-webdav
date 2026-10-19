@@ -21,7 +21,15 @@ class PagerConfig(
     private val viewer: PagerViewer,
     scope: CoroutineScope,
     readerPreferences: ReaderPreferences,
-) : ViewerConfig(readerPreferences, scope) {
+) : ViewerConfig(
+    readerPreferences,
+    scope,
+    // SY 2026-10-09 双页移植：自动模式按当前朝向决定单/双页
+    isLandscape = {
+        viewer.activity.resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    },
+) {
 
     var theme = readerPreferences.readerTheme.get()
         private set
@@ -71,6 +79,11 @@ class PagerConfig(
         readerPreferences.landscapeZoom
             .register({ landscapeZoom = it }, { imagePropertyChangedListener?.invoke() })
 
+        // SY 2026-09-29：恢复基线行为——改「预载页数」立即刷新翻页视图
+        // （PagerViewer.refreshAdapter 会重算 offscreenPageLimit 并重建 holder）。
+        readerPreferences.realCuganPreloadSize()
+            .register({ }, { imagePropertyChangedListener?.invoke() })
+
         readerPreferences.navigationModePager
             .register({ navigationMode = it }, { updateNavigation(navigationMode) })
 
@@ -83,7 +96,11 @@ class PagerConfig(
 
         readerPreferences.dualPageSplitPaged
             .register(
-                { dualPageSplit = it },
+                {
+                    dualPageSplit = it
+                    // SY 2026-10-09 双页移植：本 fork 原有的「拆分宽页」即上游的 autoSplitPages
+                    autoSplitPages = it
+                },
                 {
                     imagePropertyChangedListener?.invoke()
                     dualPageSplitChangedListener?.invoke(it)

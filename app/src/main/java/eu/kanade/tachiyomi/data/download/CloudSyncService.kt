@@ -6,6 +6,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.await
+import eu.kanade.tachiyomi.source.webdav.CoverQuality
 import logcat.LogPriority
 import okhttp3.Credentials
 import okhttp3.Headers
@@ -254,12 +255,15 @@ class CloudSyncService(
         coverDir.mkdirs()
         val baseName = mangaUrl.replace('/', '_')
         val exts = listOf("jpg", "webp", "png", "jpeg")
+        // SY --> 空白封面必须视为「不存在」，否则会把坏版本时期写下的纯白图当成
+        // 「远端 cover 已下载」直接返回，resolveCover 连抽取都进不去（见 CoverQuality 注释）。
         for (ext in exts) {
             val file = File(coverDir, "$baseName.$ext")
-            if (file.exists()) return@withIOContext file
+            if (file.exists() && !CoverQuality.isBlank(file)) return@withIOContext file
             runCatching { downloadFile(config, mangaUrl, "cover.$ext", file) }
-            if (file.exists()) return@withIOContext file
+            if (file.exists() && !CoverQuality.isBlank(file)) return@withIOContext file
         }
+        // SY <--
         null
     }
 
@@ -502,6 +506,15 @@ class CloudSyncService(
                 if (trailingSlash) addPathSegment("")
             }
             .build()
+    }
+
+    /**
+     * SY --> 流式读：把章节的相对路径解析成可直接 GET/Range 的绝对文件 URL。
+     * [WebDavRandomAccessSource] 需要完整 http(s) URL + 鉴权；这里复用与下载侧一致的
+     * base 路径拼接逻辑，保证带 base path 的 WebDAV 也能命中。
+     */
+    fun resolveFileUrl(config: CloudSyncConfig, remotePath: String): String {
+        return config.resolveUrl(remotePath).toString()
     }
 
     /**

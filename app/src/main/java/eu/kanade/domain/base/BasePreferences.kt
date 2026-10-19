@@ -37,7 +37,10 @@ class BasePreferences(
         PRIVATE(MR.strings.ext_installer_private, false),
     }
 
-    val highQualityRenderer: Preference<Boolean> = preferenceStore.getBoolean("pref_high_quality_renderer_key", false)
+    // MIHON 2026-09-28：默认开启 WebGPU 高质量渲染器（上游默认 false）。
+    // 阅读器内核据此在 WebGpuViewer（GPU 渲染）与老 Webtoon/PagerViewer 之间切换，
+    // 见 ReadingMode.toViewer()；用户仍可在「设置 → 高级 → 阅读器」关掉。
+    val highQualityRenderer: Preference<Boolean> = preferenceStore.getBoolean("pref_high_quality_renderer_key", true)
 
     val installationId: Preference<String> = preferenceStore.getString(Preference.appStateKey("installation_id"), "")
 

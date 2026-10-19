@@ -24,6 +24,7 @@
     <string name="action_search">搜索</string>
     <string name="action_global_search">全局搜索</string>
     <string name="action_select_all">全选</string>
+    <string name="action_unselect_all">取消选择</string>
     <string name="action_mark_as_read">标记为已读</string>
     <string name="action_mark_as_unread">标记为未读</string>
     <string name="action_download">下载</string>
@@ -33,6 +34,20 @@
     <string name="action_update_library">更新书架</string>
     <string name="action_edit">编辑</string>
     <string name="action_add">添加</string>
+    <string name="action_add_folder">添加文件夹</string>
+    <!-- SY 2026-10-19：「云盘」源右上角的挂载入口，与本地文件夹区分 -->
+    <string name="action_add_webdav_folder">添加 WebDAV 文件夹</string>
+    <!-- SY --> 扫描封面（文件夹书架溢出菜单） -->
+    <string name="action_scan_covers">扫描封面</string>
+    <string name="action_scan_covers_slow">慢速封面4线程</string>
+    <string name="action_scan_covers_2threads">单线程扫描封面</string>
+    <string name="scan_covers_progress">正在扫描封面 %1$d/%2$d</string>
+    <string name="scan_covers_done">封面扫描完成</string>
+    <!-- SY <-->
+    <string name="source_folders_empty">暂无文件夹，点击右上角菜单添加</string>
+    <string name="action_folder_added">已添加文件夹</string>
+    <string name="action_folder_add_failed">添加文件夹失败</string>
+    <string name="action_add_folder_path">WebDAV 文件夹路径</string>
     <string name="action_add_category">添加分类</string>
     <string name="action_edit_categories">编辑分类</string>
     <string name="action_rename_category">重命名分类</string>
@@ -69,6 +84,8 @@
     <string name="pref_category_downloads">下载</string>
     <string name="pref_category_tracking">进度记录</string>
     <string name="pref_category_advanced">高级</string>
+    <string name="pref_category_netdisk">网盘</string>
+    <string name="pref_netdisk_summary">网盘源（阅读）、WebDAV 与备份同步</string>
     <string name="pref_category_about">关于</string>
     <string name="pref_library_columns">每行数目</string>
     <string name="portrait">竖屏</string>
@@ -182,6 +199,9 @@
     <string name="updating_category">正在更新分类</string>
     <string name="no_more_results">没有更多结果</string>
     <string name="local_source">本地图源</string>
+    <!-- SY 2026-10-19：书架顶栏「本地文件夹 / 云盘」入口图标下方的小号说明 -->
+    <string name="library_entry_local_hint">本地</string>
+    <string name="library_entry_cloud_hint">云盘</string>
     <string name="other_source">其他</string>
     <string name="action_global_search_hint">全局搜索…</string>
     <string name="latest">最近更新</string>
@@ -439,6 +459,11 @@
     <string name="pref_dual_page_split">拆分双页</string>
     <string name="pref_dual_page_invert">拆分双页时交换顺序</string>
     <string name="pref_dual_page_invert_summary">拆分双页的顺序与阅读方向不符时可以开启</string>
+    <string name="pref_page_layout">页面布局</string>
+    <string name="page_layout_single">单页</string>
+    <string name="page_layout_double">双页</string>
+    <string name="page_layout_automatic">自动</string>
+    <string name="pref_invert_double_pages">双页左右互换</string>
     <string name="backup_restore_content_full">可能需要安装缺失的插件并重新登录进度记录平台。</string>
     <string name="nav_zone_right">往右</string>
     <string name="nav_zone_left">往左</string>
@@ -907,15 +932,16 @@
     <string name="pref_filter_upcoming_categories_details">同时属于包含和排除分类的标题将不予显示。</string>
     <!-- SY start: 云同步（WebDAV）与超分状态 -->
     <string name="action_select">选择</string>
-    <string name="cloud_sync">云盘同步</string>
-    <string name="cloud_sync_login">云盘同步登录</string>
+    <!-- SY 2026-10-19：按用户要求，设置里的「云盘同步」统一改名为「WebDAV 登录」 -->
+    <string name="cloud_sync">WebDAV 登录</string>
+    <string name="cloud_sync_login">WebDAV 登录</string>
     <string name="cloud_sync_webdav_url">WebDAV 地址</string>
     <string name="cloud_sync_test_connection">测试连接</string>
-    <string name="cloud_sync_connection_success">云盘同步已连接</string>
-    <string name="cloud_sync_connection_failed">云盘同步连接失败</string>
+    <string name="cloud_sync_connection_success">WebDAV 已连接</string>
+    <string name="cloud_sync_connection_failed">WebDAV 连接失败</string>
     <string name="cloud_sync_not_configured">未配置</string>
     <string name="cloud_sync_connected">已连接为 %s</string>
-    <string name="cloud_sync_requires_cbz">需要先开启「保存为 CBZ 压缩包」才能使用云盘同步</string>
+    <string name="cloud_sync_requires_cbz">需要先开启「保存为 CBZ 压缩包」才能使用 WebDAV 上传</string>
     <string name="cloud_sync_destination">同步目标位置</string>
     <string name="cloud_sync_no_destination">尚未选择目标位置</string>
     <string name="cloud_sync_delete_after_upload">同步后删除本地文件</string>
@@ -935,8 +961,8 @@
     <string name="reader_show_processing_status">在左下角显示处理状态</string>
     <!-- SY start: 超分设置项（此前只写了 base，中文环境回退成英文） -->
     <string name="reader_image_enhancement">画面增强</string>
-    <string name="reader_image_enhancement_whole_chapter">整话超分</string>
-    <string name="reader_image_enhancement_whole_chapter_summary">对本章每一页都做超分并写入缓存，而不只是你滑到的那些页。在线源会逐页联网拉取。</string>
+    <string name="reader_upscale_yield">超分让路</string>
+    <string name="reader_upscale_yield_summary">开启后，触摸、滑动和开章时超分会暂停，把算力让给流畅度；关闭后超分始终全速运行。</string>
     <!-- SY 超分引擎后端（TachiyomiX 超分移植）。两套原生库同时全局导出同名 C++ 符号，一个进程只装一个，切换后必须重启应用。 -->
     <!-- SY 旧模型名，代码已不再引用，保留以免与其它语言文件不一致（此处不写箭头，避免注释内出现连续两个连字符） -->
     <string name="reader_model_anime4k_acnet_note">本版唯一的超分模型：单通道亮度网络，全程走 GPU 融合管线，画质锐利。</string>
@@ -954,6 +980,7 @@
     <string name="reader_scale_fixed_2x">2 倍（固定）</string>
     <string name="reader_preload_pages">预载页数</string>
     <string name="reader_preload_pages_value">%1$d 页</string>
+    <string name="reader_preload_pages_half">半屏</string>
     <string name="reader_gpu_performance_mode">GPU 性能模式</string>
     <string name="reader_gpu_performance_high">高性能 90%</string>
     <string name="reader_gpu_performance_balanced">均衡 50%</string>
@@ -974,4 +1001,61 @@
     <!-- SY end -->
     <string name="browse_jump_to_page">跳转到第几页</string>
     <string name="browse_page_number_label">页码</string>
+
+    <!-- SY start: 阿里云盘双向备份同步（移植自 TachiyomiX） -->
+    <string name="sync_complete">同步完成</string>
+    <string name="sync_error">同步出错</string>
+    <string name="sync_success_completed">同步已成功完成</string>
+    <string name="sync_no_remote_data">云端没有可同步的数据</string>
+    <string name="sync_updated_remote">已更新云端数据</string>
+    <string name="aliyun_pan_not_configured">阿里云盘未配置</string>
+    <string name="sync_on_chapter_read">读完一章后同步</string>
+    <string name="sync_on_chapter_open">打开未读章节后同步</string>
+    <string name="sync_on_app_start">应用启动时同步</string>
+    <string name="sync_on_app_resume">应用回到前台时同步</string>
+
+    <string name="pref_sync_service_category">同步服务</string>
+    <string name="pref_sync_service">同步服务</string>
+    <string name="aliyun_pan">阿里云盘</string>
+    <string name="pref_choose_what_to_sync">选择要同步的内容</string>
+    <string name="label_triggers">触发时机</string>
+
+    <string name="pref_aliyun_pan_sign_in">登录阿里云盘</string>
+    <string name="pref_aliyun_pan_sign_in_summ">用阿里云盘 App 扫描二维码登录</string>
+    <string name="pref_aliyun_pan_refresh_token">刷新令牌</string>
+    <string name="pref_aliyun_pan_refresh_token_summ">无法扫码时可手动粘贴刷新令牌</string>
+    <string name="pref_aliyun_pan_test_connection">测试连接</string>
+    <string name="aliyun_pan_connection_test_success">阿里云盘连接成功</string>
+    <string name="aliyun_pan_connection_test_failed">阿里云盘连接失败</string>
+    <string name="pref_aliyun_pan_purge_sync_data">清除阿里云盘上的同步数据</string>
+    <string name="pref_purge_confirmation_title">清除同步数据</string>
+    <string name="pref_purge_confirmation_aliyun_pan_message">将删除阿里云盘中保存的同步数据，本机书架不会被修改。</string>
+    <string name="aliyun_pan_sync_data_not_found">阿里云盘中没有找到同步数据</string>
+    <string name="aliyun_pan_sync_data_purged">已清除阿里云盘上的同步数据</string>
+    <string name="aliyun_pan_sync_data_purge_error">清除阿里云盘同步数据失败</string>
+
+    <string name="pref_sync_now_group_title">立即同步</string>
+    <string name="pref_sync_now">立即同步</string>
+    <string name="pref_sync_now_subtitle">上传本机数据并恢复云端数据</string>
+    <string name="pref_sync_options">同步选项</string>
+    <string name="pref_sync_options_summ">选择在什么时候自动同步</string>
+    <string name="pref_sync_automatic_category">自动同步</string>
+    <string name="pref_sync_interval">同步间隔</string>
+    <string name="last_synchronization">上次同步：%s</string>
+    <string name="sync_in_progress">已有同步正在进行</string>
+    <string name="update_30min">每 30 分钟</string>
+    <string name="update_1hour">每 1 小时</string>
+    <string name="update_3hour">每 3 小时</string>
+
+    <string name="aliyun_pan_qr_waiting">请用阿里云盘 App 扫描二维码登录</string>
+    <string name="aliyun_pan_qr_scanned">已扫描，请在手机上确认</string>
+    <string name="aliyun_pan_qr_failed">登录失败</string>
+    <string name="aliyun_pan_qr_expired">二维码已过期，请刷新</string>
+    <string name="aliyun_pan_qr_refresh">刷新</string>
+    <string name="aliyun_pan_qr_save">保存</string>
+    <string name="aliyun_pan_qr_saved">二维码已保存到相册</string>
+    <string name="aliyun_pan_qr_save_failed">保存二维码失败</string>
+    <string name="aliyun_pan_login_success">阿里云盘登录成功</string>
+    <!-- SY end -->
+    <string name="theme_gray">灰色</string>
 </resources>

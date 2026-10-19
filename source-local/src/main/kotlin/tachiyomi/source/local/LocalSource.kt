@@ -99,8 +99,9 @@ class LocalSource(
         }
 
         var mangaDirs = fileSystem.getFilesInBaseDirectory()
-            // Filter out files that are hidden and is not a folder
-            .filter { it.isDirectory && !it.name.orEmpty().startsWith('.') }
+            // 让目录型与归档型（zip/cbz/rar/7z/tar）漫画都能进入列表：
+            // 之前只认目录，导致 CloudDrive 等挂载盘上「全是 zip 的文件夹」列不出（"没有结果"）。
+            .filter { !it.name.orEmpty().startsWith('.') && (it.isDirectory || Archive.isSupported(it)) }
             .distinctBy { it.name }
             .filter {
                 if (lastModifiedLimit == 0L && query.isBlank()) {
@@ -216,7 +217,8 @@ class LocalSource(
 
                 // Copy ComicInfo.xml from chapter archive to top level if found
                 noXmlFile == null -> {
-                    val chapterArchives = mangaDirFiles.filter(Archive::isSupported)
+                    // 限制探测前 8 个子归档的 ComicInfo，避免目录型 manga（含上千 zip）进详情页时全扫卡死
+                    val chapterArchives = mangaDirFiles.filter(Archive::isSupported).take(8)
 
                     val copiedFile = copyComicInfoFileFromChapters(chapterArchives, mangaDir)
                     if (copiedFile != null) {
@@ -302,6 +304,18 @@ class LocalSource(
 
     // Chapters
     private suspend fun getChapterList(manga: SManga): List<SChapter> = withIOContext {
+        val mangaDir = fileSystem.getMangaDirectory(manga.url)
+        // 单归档 manga：整个 zip/cbz 即一本漫画（封面/章节都从它取），直接返回单章
+        if (mangaDir != null && Archive.isSupported(mangaDir)) {
+            return@withIOContext listOf(
+                SChapter.create().apply {
+                    url = manga.url
+                    name = mangaDir.nameWithoutExtension.orEmpty()
+                    date_upload = mangaDir.lastModified()
+                    chapter_number = 1f
+                },
+            )
+        }
         val chapters = fileSystem.getFilesInMangaDirectory(manga.url)
             // Only keep supported formats
             .filterNot { it.name.orEmpty().startsWith('.') }
@@ -322,16 +336,6 @@ class LocalSource(
                         .parseChapterNumber(manga.title, this.name, this.chapter_number.toDouble())
                         .toFloat()
 
-                    val format = Format.valueOf(chapterFile)
-                    if (format is Format.Epub) {
-                        format.file.epubReader(context).use { epub ->
-                            epub.fillMetadata(manga, this)
-                        }
-                    } else {
-                        getComicInfoForChapter(chapterFile) { stream ->
-                            setChapterDetailsFromComicInfoFile(stream, this)
-                        }
-                    }
                 }
             }
             .sortedWith { c1, c2 ->
@@ -356,7 +360,15 @@ class LocalSource(
 
     fun getFormat(chapter: SChapter): Format {
         try {
-            val (mangaDirName, chapterName) = chapter.url.split('/', limit = 2)
+            val parts = chapter.url.split('/', limit = 2)
+            val mangaDirName = parts[0]
+            // 单归档 manga：整个 zip 即一章，url 只有一段
+            if (parts.size == 1) {
+                return fileSystem.getMangaDirectory(mangaDirName)
+                    ?.let(Format.Companion::valueOf)
+                    ?: throw Exception(context.stringResource(MR.strings.chapter_not_found))
+            }
+            val chapterName = parts[1]
             return fileSystem.getBaseDirectory()
                 ?.findFile(mangaDirName)
                 ?.findFile(chapterName)

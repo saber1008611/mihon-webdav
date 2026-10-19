@@ -23,11 +23,27 @@ class ReaderNavigationOverlayView(context: Context, attributeSet: AttributeSet) 
     private var navigation: ViewerNavigation? = null
 
     fun setNavigation(navigation: ViewerNavigation, showOnStart: Boolean) {
-        val firstLaunch = this.navigation == null
+        val previous = this.navigation
         this.navigation = navigation
         invalidate()
 
-        if (isVisible || (!showOnStart && firstLaunch) || navigation is DisabledNavigation) {
+        // SY --> 2026-09-29：只在「导航方案**真的变了**」时才自动浮现。
+        //
+        // 原判据是 `firstLaunch = this.navigation == null`，本意是「首次进阅读器才弹」；
+        // 但本 overlay 挂在 **Activity** 上（`binding.navigationOverlay`），而「本作读完 →
+        // 接下一部」会**原地重建 viewer**（`ReaderActivity.updateViewer()`），
+        // 新区间的 `WebtoonConfig.init` 又会触发一次 `navigationModeChangedListener`
+        // ⇒ `setNavigation` 第二次被调 ⇒ `firstLaunch = false` ⇒ **每次自动换书都白弹一遍
+        // 「上一页 / 下一页」的点按区域提示**（真机实测，`reader_navigation_overlay_on_start`
+        // 与 `_new_user` 均为 false，唯一成因就是这条）。
+        //
+        // 上游能这么写，是因为它只在「首次进入」和「用户改了导航模式」时重建 viewer。
+        // 现在改成：`showOnStart`（偏好 / 新用户引导）或**导航器类型变了**才浮现，
+        // 顺手把「重建 viewer」这类非用户意图的浮现一并挡掉（对翻页模式也适用）。
+        val changed = previous != null && previous.javaClass != navigation.javaClass
+        // SY <--
+
+        if (isVisible || (!showOnStart && !changed) || navigation is DisabledNavigation) {
             return
         }
 

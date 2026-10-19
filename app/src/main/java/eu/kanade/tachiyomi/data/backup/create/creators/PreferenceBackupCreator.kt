@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.backup.create.creators
 
 import dev.zacsweers.metro.Inject
+import eu.kanade.tachiyomi.data.backup.BackupCredentialGuard
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
@@ -25,6 +26,7 @@ class PreferenceBackupCreator(
     fun createApp(includePrivatePreferences: Boolean): List<BackupPreference> {
         return preferenceStore.getAll().toBackupPreferences()
             .withPrivatePreferences(includePrivatePreferences)
+            .let(BackupCredentialGuard::withoutCredentials)
     }
 
     suspend fun createSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {

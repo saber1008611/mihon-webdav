@@ -10,6 +10,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -35,9 +36,11 @@ import eu.kanade.presentation.more.onboarding.GETTING_STARTED_URL
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import eu.kanade.tachiyomi.ui.browse.source.browse.FolderLibraryScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
+import eu.kanade.tachiyomi.source.webdav.WebDavSource
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
@@ -46,6 +49,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import mihon.app.di.appGraph
 import mihon.feature.migration.config.MigrationConfigScreen
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.automirroredrounded.Help
@@ -60,7 +64,9 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
+import tachiyomi.source.local.LocalSource
 import tachiyomi.source.local.isLocal
+import eu.kanade.tachiyomi.source.Source
 
 data object LibraryTab : Tab {
 
@@ -90,6 +96,16 @@ data object LibraryTab : Tab {
         val viewModel = metroViewModel<LibraryViewModel>()
         val settingsViewModel = metroViewModel<LibrarySettingsViewModel>()
         val state by viewModel.state.collectAsStateWithLifecycle()
+
+        // SY --> 书架顶部快捷入口：本地图源 / WebDAV 云盘
+        val sourceManager = remember { context.appGraph.sourceManager }
+        val localSourceState = remember { mutableStateOf<Source?>(null) }
+        val webDavSourceState = remember { mutableStateOf<Source?>(null) }
+        LaunchedEffect(Unit) {
+            localSourceState.value = sourceManager.getOrStub(LocalSource.ID)
+            webDavSourceState.value = sourceManager.getOrStub(WebDavSource.ID)
+        }
+        // SY <--
 
         val snackbarHostState = remember { SnackbarHostState() }
 
@@ -139,6 +155,12 @@ data object LibraryTab : Tab {
                     onSearchQueryChange = viewModel::search,
                     // For scroll overlay when no tab
                     scrollBehavior = scrollBehavior.takeIf { !state.showCategoryTabs },
+                    // SY --> 书架顶部快捷入口：进入本地图源 / WebDAV 云盘「文件夹书架」
+                    localSource = localSourceState.value,
+                    webDavSource = webDavSourceState.value,
+                    onClickLocalSource = { navigator.push(FolderLibraryScreen(LocalSource.ID)) },
+                    onClickWebDavSource = { navigator.push(FolderLibraryScreen(WebDavSource.ID)) },
+                    // SY <--
                 )
             },
             bottomBar = {
@@ -187,7 +209,11 @@ data object LibraryTab : Tab {
                         hasActiveFilters = state.hasActiveFilters,
                         showPageTabs = state.showCategoryTabs || !state.searchQuery.isNullOrEmpty(),
                         onChangeCurrentPage = viewModel::updateActiveCategoryIndex,
-                        onClickManga = { navigator.push(MangaScreen(it)) },
+                        // SY --> 只有一章的漫画：点一下直接进阅读器（多章的照旧进详情页）
+                        onClickManga = {
+                            navigator.push(MangaScreen(it, openDirectlyIfSingleChapter = true))
+                        },
+                        // SY <--
                         onContinueReadingClicked = { it: LibraryManga ->
                             scope.launchIO {
                                 val chapter = viewModel.getNextUnreadChapter(it.manga)

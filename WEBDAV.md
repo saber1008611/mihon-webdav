@@ -28,7 +28,7 @@
 ```
 
 - `目标目录` 的**直接子目录**即漫画文件夹（单层，不递归）。
-- 每个漫画文件夹内的章节支持 **10 种格式**：压缩包 `zip`/`cbz`/`rar`/`cbr`/`7z`/`cb7`/`tar`/`cbt`、电子书 `epub` 与 `pdf`；`cover.{jpg,jpeg,png,webp}` 作为封面。底层 `ArchiveReader` 基于 libarchive 原生解压，epub 走 `EpubReader`，pdf 走 `PdfPageLoader`（Android 内置 `PdfRenderer` 逐页渲染，**无第三方依赖、不增大 APK**）。
+- 每个漫画文件夹内的章节支持 **10 种格式**：压缩包 `zip`/`cbz`/`rar`/`cbr`/`7z`/`cb7`/`tar`/`cbt`、电子书 `epub` 与 `pdf`；`cover.{jpg,jpeg,png,webp}` 作为封面。底层 `ArchiveReader` 基于 libarchive 原生解压，epub 走 `EpubReader`，pdf 走 `PdfPageLoader`（Phase C 起用 `io.legere:pdfiumandroid`（pdfium 绑定，Apache-2.0）逐页渲染，arm64 约增大 APK 5MB；对超大/结构复杂 PDF 的容错远好于原 Android 内置 `PdfRenderer`）。
 
 ## 关键设计
 
@@ -36,8 +36,8 @@
 |---|---|
 | 列表浏览 | `listDirectories(config, destination)` 列直接子目录 → 每个子目录是一本书；**只列目录、不预拉封面**，几十上百本也不转圈 |
 | 章节列表 | `listFiles(config, manga.url)` 过滤支持的章节格式（`isChapterFile`：zip/cbz/rar/cbr/7z/cb7/tar/cbt/epub/pdf），用 `ChapterRecognition` 解析话数 |
-| 阅读 | `ChapterLoader` 在 `source is WebDavSource` 分支调用 `getArchiveFile()` 把章节**流式下载到缓存**，再按扩展名交给现成的 `ArchivePageLoader`（压缩包）、`EpubPageLoader`（epub）或 `PdfPageLoader`（pdf）读页（翻页/封面/ComicInfo 全复用）；`getPageList()` 抛 `UnsupportedOperationException`（与 `LocalSource` 同一契约） |
-| 封面懒加载 | 列表项填 `content://eu.kanade.tachiyomi.webdav.cover/<编码路径>`（`WebDavCoverProvider`）。Coil 在网格项滚到可见时才各下载一次，天然懒加载、不阻塞列表；且走与上传同源、带鉴权的 `CloudSyncService`，绕开 Mihon 全局图片加载器对 WebDAV 鉴权的限制 |
+| 阅读 | `ChapterLoader` 在 `source is WebDavSource` 分支分流：`zip/cbz` 与 `pdf` 走 **HTTP Range 流式直读**（`WebDavRandomAccessSource`，不整本下载；服务器不支持 Range 自动整本落盘回退），其余扩展名 `getArchiveFile()` 整本下载到缓存；再按类型交给 `ArchivePageLoader`/`EpubPageLoader`/`PdfPageLoader`（翻页/封面/ComicInfo 全复用）；`getPageList()` 抛 `UnsupportedOperationException`（与 `LocalSource` 同一契约） |
+| 封面懒加载 | 列表项填 `content://app.mihonW.webdav.cover/<编码路径>`（`WebDavCoverProvider`）。Coil 在网格项滚到可见时才各下载一次，天然懒加载、不阻塞列表；且走与上传同源、带鉴权的 `CloudSyncService`，绕开 Mihon 全局图片加载器对 WebDAV 鉴权的限制 |
 | 详情不污染 | `getMangaUpdate` **不改写** `thumbnail_url`：列表里填的 `content://` 直链在详情页同样由 `MangaCoverFetcher` 走 `Type.URI` 加载；若改成 `file://` 会被详情页 `upsert` 写进数据库，返回列表时污染封面 |
 | 排序/筛选 | 稳定单例 `sortFilter`（`Filter.Sort("排序", ["最近更新","名称"])`）。`热门/最新` tab 的 `GetRemoteManga` 不带 `filters` 参数，因此排序 Filter **必须返回稳定单例**，界面改 state 源内部才读得到。最新 tab 默认按目录修改时间倒序；`SManga` 在本 fork 无 `date_upload` 字段，故用内部 `WebDavMangaListItem(manga, lastModified)` 携带时间 |
 | 未配置降级 | `configOrNull()` 在 `cloudSyncEnabled==false` 或 URL 为空时返回 `null`，所有浏览/详情方法据此**优雅返回空**，不抛异常连累全局搜索等调用方 |
@@ -50,7 +50,7 @@
 | `app/src/main/java/eu/kanade/tachiyomi/source/webdav/WebDavCoverProvider.kt` | `content://` 封面通道（可见才带鉴权下载） |
 | `app/src/main/java/eu/kanade/tachiyomi/data/download/CloudSyncService.kt` | WebDAV 客户端：`PROPFIND`/`GET`、目录列举、封面上传/下载、时间解析 |
 | `app/src/main/java/eu/kanade/tachiyomi/source/AndroidSourceManager.kt` 与 `domain/.../GetEnabledSources.kt` | 把 `WebDavSource` 注入内置源列表 |
-| `app/src/main/AndroidManifest.xml` | 注册 `WebDavCoverProvider`（authorities=`eu.kanade.tachiyomi.webdav.cover`，`exported=false`，`grantUriPermissions=true`） |
+| `app/src/main/AndroidManifest.xml` | 注册 `WebDavCoverProvider`（authorities=`app.mihonW.webdav.cover`，`exported=false`，`grantUriPermissions=true`） |
 
 ## 协议与认证
 

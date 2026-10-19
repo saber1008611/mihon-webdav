@@ -37,6 +37,13 @@ class LibraryPreferences(
 
     val landscapeColumns: Preference<Int> = preferenceStore.getInt("pref_library_columns_landscape_key", 0)
 
+    // SY --> 文件夹书架：被「仅隐藏视图」的文件夹（不删原文件），格式 "sourceId:url"，按源区分（本地图源 / WebDAV 各自独立）。
+    val folderLibraryHiddenFolders: Preference<Set<String>> = preferenceStore.getStringSet(
+        "folder_library_hidden_folders",
+        emptySet(),
+    )
+    // SY <--
+
     val lastUpdatedTimestamp: Preference<Long> = preferenceStore.getLong(
         Preference.appStateKey("library_update_last_timestamp"),
         0L,

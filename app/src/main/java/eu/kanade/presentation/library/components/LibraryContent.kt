@@ -15,6 +15,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.dp
 import eu.kanade.core.preference.PreferenceMutableState
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import kotlinx.coroutines.delay
@@ -46,9 +47,11 @@ fun LibraryContent(
     getColumnsForOrientation: (Boolean) -> PreferenceMutableState<Int>,
     getItemsForCategory: (Category) -> List<LibraryItem>,
 ) {
+    // SY --> 书架顶部空白对齐本地图源：无分类标签时让网格直接贴顶栏，有标签时才保留顶部内边距
+    val topPadding = if (showPageTabs) contentPadding.calculateTopPadding() else 0.dp
     Column(
         modifier = Modifier.padding(
-            top = contentPadding.calculateTopPadding(),
+            top = topPadding,
             start = contentPadding.calculateStartPadding(LocalLayoutDirection.current),
             end = contentPadding.calculateEndPadding(LocalLayoutDirection.current),
         ),

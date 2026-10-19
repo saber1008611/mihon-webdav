@@ -52,10 +52,10 @@ android {
     namespace = "eu.kanade.tachiyomi"
 
     defaultConfig {
-        applicationId = "app.mihon"
+        applicationId = "app.mihonW"
 
-        versionCode = 30
-        versionName = "0.20.4"
+        versionCode = 66
+        versionName = "1.0.36"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getLatestCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getLatestCommitSha()}\"")
@@ -315,8 +315,15 @@ dependencies {
     // Data serialization (JSON, protobuf, xml)
     implementation(libs.bundles.serialization)
 
+    // 阿里云盘同步：设备会话签名需要 secp256k1 ECDSA
+    implementation(libs.bouncycastle.bcprov)
+    implementation(libs.zxing.core)
+
     // HTML parser
     implementation(libs.jsoup)
+
+    // PDF rendering (pdfium 绑定，Phase C 流式读)
+    implementation(libs.pdfium)
 
     // Disk
     implementation(libs.diskLruCache)

@@ -23,7 +23,7 @@ class LocalSourceFileSystem(
     fun getMangaDirectory(name: String): UniFile? {
         return getBaseDirectory()
             ?.findFile(name)
-            ?.takeIf { it.isDirectory }
+            ?.takeIf { it.isDirectory || Archive.isSupported(it) }
     }
 
     fun getFilesInMangaDirectory(name: String): List<UniFile> {

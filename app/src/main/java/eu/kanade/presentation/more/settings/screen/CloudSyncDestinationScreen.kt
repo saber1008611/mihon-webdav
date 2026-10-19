@@ -12,8 +12,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -252,5 +255,140 @@ private fun buildDirectoryRows(
 
     return buildList {
         addRows(root, 0, this)
+    }
+}
+
+/**
+ * SY --> 从 mihon_img_upscale 移植并复用：WebDAV 远端目录树选择器。
+ *
+ * 与 [CloudSyncDestinationScreen] 共用同一套懒加载目录树 UI，但作为独立 Dialog 弹出，
+ * 选定后通过 [onPick] 把归一化路径回传给调用方（例如 WebDAV 图源的「添加文件夹」），
+ * 而不写入同步目标偏好。
+ *
+ * @param onPick 用户点「选择」后回调，参数为归一化后的远端目录路径。
+ * @param onDismiss 取消 / 点返回时回调。
+ * SY <--
+ */
+@Composable
+fun CloudSyncDirectoryPicker(
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val downloadPreferences = remember { context.appGraph.downloadPreferences }
+    val cloudSyncService = remember { context.appGraph.cloudSyncService }
+
+    val url by downloadPreferences.cloudSyncUrl.collectAsState()
+    val username by downloadPreferences.cloudSyncUsername.collectAsState()
+    val password by downloadPreferences.cloudSyncPassword.collectAsState()
+    val savedDestination by downloadPreferences.cloudSyncDestination.collectAsState()
+    val config = remember(url, username, password) {
+        CloudSyncConfig(
+            url = url,
+            username = username,
+            password = password,
+        )
+    }
+
+    var selectedPath by remember(savedDestination) {
+        mutableStateOf(savedDestination.ifBlank { "/" })
+    }
+    var expandedPaths by remember { mutableStateOf(setOf("/")) }
+    var loadingPaths by remember { mutableStateOf(setOf<String>()) }
+    var childrenByPath by remember { mutableStateOf(emptyMap<String, List<CloudSyncDirectory>>()) }
+
+    fun load(path: String) {
+        val normalizedPath = normalizePath(path)
+        if (!config.isValid || normalizedPath in loadingPaths) return
+        scope.launch {
+            loadingPaths += normalizedPath
+            runCatching { cloudSyncService.listDirectories(config, normalizedPath) }
+                .onSuccess { children ->
+                    childrenByPath += normalizedPath to children
+                    expandedPaths += normalizedPath
+                }
+                .onFailure { context.toast(it.message ?: "") }
+            loadingPaths -= normalizedPath
+        }
+    }
+
+    LaunchedEffect(config) {
+        load("/")
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Scaffold(
+            topBar = {
+                AppBar(
+                    // SY 2026-10-19：这个选择器就是给「添加 WebDAV 文件夹」选远端目录的，标题同步
+                    title = stringResource(MR.strings.action_add_webdav_folder),
+                    navigateUp = onDismiss,
+                    actions = {
+                        TextButton(
+                            enabled = selectedPath.isNotBlank(),
+                            onClick = { onPick(normalizePath(selectedPath)) },
+                        ) {
+                            Text(text = stringResource(MR.strings.action_select))
+                        }
+                    },
+                    scrollBehavior = it,
+                )
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) { contentPadding ->
+            if (!config.isValid) {
+                Text(
+                    text = stringResource(MR.strings.cloud_sync_not_configured),
+                    modifier = Modifier.padding(contentPadding).padding(16.dp),
+                )
+                return@Scaffold
+            }
+
+            val rows = remember(childrenByPath, expandedPaths, loadingPaths) {
+                buildDirectoryRows(
+                    root = CloudSyncDirectory(name = "/", path = "/"),
+                    childrenByPath = childrenByPath,
+                    expandedPaths = expandedPaths,
+                    loadingPaths = loadingPaths,
+                )
+            }
+
+            LazyColumn(
+                contentPadding = PaddingValues(
+                    top = contentPadding.calculateTopPadding(),
+                    bottom = contentPadding.calculateBottomPadding(),
+                ),
+            ) {
+                items(rows, key = { it.directory.path }) { row ->
+                    CloudSyncDirectoryListRow(
+                        row = row,
+                        selected = normalizePath(selectedPath) == row.directory.path,
+                        expanded = row.loading || row.directory.path in expandedPaths,
+                        onToggle = {
+                            val path = row.directory.path
+                            if (path in childrenByPath) {
+                                expandedPaths = if (path in expandedPaths) {
+                                    expandedPaths - path
+                                } else {
+                                    expandedPaths + path
+                                }
+                            } else {
+                                load(path)
+                            }
+                        },
+                        onSelect = {
+                            selectedPath = row.directory.path
+                            if (row.directory.path !in childrenByPath) {
+                                load(row.directory.path)
+                            }
+                        },
+                    )
+                }
+            }
+        }
     }
 }

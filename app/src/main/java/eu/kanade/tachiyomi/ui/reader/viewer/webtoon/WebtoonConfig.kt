@@ -118,3 +118,20 @@ class WebtoonConfig(
         navigationModeChangedListener?.invoke()
     }
 }
+
+/**
+ * SY 2026-10-18：「拆分双页 / 旋转适配」变换后的**变体名**。
+ *
+ * 必须与两处键完全一致：
+ *  · 超分缓存文件名（`<pageIndex>_<configHash>[_<variant>].webp`）；
+ *  · 低清预览缓存键（[eu.kanade.tachiyomi.ui.reader.viewer.PagePreviewCache.Key]）。
+ * 因为拆分/旋转之后的显示比例与原页不同，混用会看到比例不对的图。
+ *
+ * 原先这段判断内联在 WebtoonPageHolder.setImage 里。抽出来是为了让
+ * 「换图时的缓存键」与「首次布局前的预览预取」共用同一份判断，避免两处漂移。
+ */
+fun ViewerConfig.pageTransformVariant(): String = when {
+    dualPageRotateToFit -> if (dualPageRotateToFitInvert) "r270" else "r90"
+    dualPageSplit -> if (dualPageInvert) "dpsL" else "dpsR"
+    else -> ""
+}

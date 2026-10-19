@@ -18,4 +18,11 @@ class StoragePreferences(
         Preference.appStateKey("storage_dir"),
         folderProvider.path(),
     )
+
+    /** SY --> 本地图源额外根目录（SAF URI 集合）；默认 local 文件夹始终包含，不受此项影响。 */
+    val localSourceExtraDirectories: Preference<Set<String>> = preferenceStore.getStringSet(
+        Preference.appStateKey("local_source_extra_directories"),
+        emptySet(),
+    )
+    // SY <--
 }

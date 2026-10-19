@@ -1,0 +1,145 @@
+package eu.kanade.domain.sync
+
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import eu.kanade.domain.sync.models.SyncSettings
+import eu.kanade.domain.sync.models.SyncTriggerOptions
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.core.common.preference.PreferenceStore
+import java.util.UUID
+
+@Inject
+@SingleIn(AppScope::class)
+class SyncPreferences(
+    private val preferenceStore: PreferenceStore,
+) {
+    val clientHost: Preference<String> = preferenceStore.getString("sync_client_host", "https://sync.tachiyomi.org")
+    val clientAPIKey: Preference<String> = preferenceStore.getString("sync_client_api_key", "")
+    val lastSyncTimestamp: Preference<Long> = preferenceStore.getLong(Preference.appStateKey("last_sync_timestamp"), 0L)
+
+    val lastSyncEtag: Preference<String> = preferenceStore.getString("sync_etag", "")
+
+    val syncInterval: Preference<Int> = preferenceStore.getInt("sync_interval", 0)
+    val syncService: Preference<Int> = preferenceStore.getInt("sync_service", 0)
+
+    val googleDriveAccessToken: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("google_drive_access_token"),
+        "",
+    )
+
+    val googleDriveRefreshToken: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("google_drive_refresh_token"),
+        "",
+    )
+
+    val webDavUrl: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("webdav_url"),
+        "",
+    )
+
+    val webDavUsername: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("webdav_username"),
+        "",
+    )
+
+    val webDavPassword: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("webdav_password"),
+        "",
+    )
+
+    val aliyunPanRefreshToken: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("aliyun_pan_refresh_token"),
+        "",
+    )
+
+    val aliyunPanAccessToken: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("aliyun_pan_access_token"),
+        "",
+    )
+
+    val aliyunPanTokenExpireTime: Preference<Long> = preferenceStore.getLong(
+        Preference.appStateKey("aliyun_pan_token_expire_time"),
+        0L,
+    )
+
+    val aliyunPanUserId: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("aliyun_pan_user_id"),
+        "",
+    )
+
+    val aliyunPanDriveId: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("aliyun_pan_drive_id"),
+        "",
+    )
+
+    val aliyunPanDeviceId: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("aliyun_pan_device_id"),
+        "",
+    )
+
+    fun uniqueDeviceID(): String {
+        val uniqueIDPreference = preferenceStore.getString(Preference.appStateKey("unique_device_id"), "")
+
+        // Retrieve the current value of the preference
+        var uniqueID = uniqueIDPreference.get()
+        if (uniqueID.isBlank()) {
+            uniqueID = UUID.randomUUID().toString()
+            uniqueIDPreference.set(uniqueID)
+        }
+
+        return uniqueID
+    }
+
+    fun isSyncEnabled(): Boolean {
+        return syncService.get() != 0
+    }
+
+    fun getSyncSettings(): SyncSettings {
+        return SyncSettings(
+            libraryEntries = preferenceStore.getBoolean("library_entries", true).get(),
+            categories = preferenceStore.getBoolean("categories", true).get(),
+            chapters = preferenceStore.getBoolean("chapters", true).get(),
+            tracking = preferenceStore.getBoolean("tracking", true).get(),
+            history = preferenceStore.getBoolean("history", true).get(),
+            appSettings = preferenceStore.getBoolean("appSettings", true).get(),
+            extensionStores = preferenceStore.getBoolean("extensionRepoSettings", true).get(),
+            readEntries = preferenceStore.getBoolean("readEntries", true).get(),
+            sourceSettings = preferenceStore.getBoolean("sourceSettings", true).get(),
+            privateSettings = preferenceStore.getBoolean("privateSettings", true).get(),
+        )
+    }
+
+    fun setSyncSettings(syncSettings: SyncSettings) {
+        preferenceStore.getBoolean("library_entries", true).set(syncSettings.libraryEntries)
+        preferenceStore.getBoolean("categories", true).set(syncSettings.categories)
+        preferenceStore.getBoolean("chapters", true).set(syncSettings.chapters)
+        preferenceStore.getBoolean("tracking", true).set(syncSettings.tracking)
+        preferenceStore.getBoolean("history", true).set(syncSettings.history)
+        preferenceStore.getBoolean("appSettings", true).set(syncSettings.appSettings)
+        preferenceStore.getBoolean("extensionRepoSettings", true).set(syncSettings.extensionStores)
+        preferenceStore.getBoolean("readEntries", true).set(syncSettings.readEntries)
+        preferenceStore.getBoolean("sourceSettings", true).set(syncSettings.sourceSettings)
+        preferenceStore.getBoolean("privateSettings", true).set(syncSettings.privateSettings)
+    }
+
+    fun getSyncTriggerOptions(): SyncTriggerOptions {
+        return SyncTriggerOptions(
+            syncOnChapterRead = preferenceStore.getBoolean("sync_on_chapter_read", false).get(),
+            syncOnChapterOpen = preferenceStore.getBoolean("sync_on_chapter_open", false).get(),
+            syncOnAppStart = preferenceStore.getBoolean("sync_on_app_start", false).get(),
+            syncOnAppResume = preferenceStore.getBoolean("sync_on_app_resume", false).get(),
+        )
+    }
+
+    fun setSyncTriggerOptions(syncTriggerOptions: SyncTriggerOptions) {
+        preferenceStore.getBoolean("sync_on_chapter_read", false)
+            .set(syncTriggerOptions.syncOnChapterRead)
+        preferenceStore.getBoolean("sync_on_chapter_open", false)
+            .set(syncTriggerOptions.syncOnChapterOpen)
+        preferenceStore.getBoolean("sync_on_app_start", false)
+            .set(syncTriggerOptions.syncOnAppStart)
+        preferenceStore.getBoolean("sync_on_app_resume", false)
+            .set(syncTriggerOptions.syncOnAppResume)
+    }
+}

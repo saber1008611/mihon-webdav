@@ -108,7 +108,7 @@ class MangaRestorer(
         )
     }
 
-    private suspend fun updateManga(manga: Manga): Manga {
+    internal suspend fun updateManga(manga: Manga): Manga {
         database.mangasQueries.update(
             source = manga.source,
             url = manga.url,

@@ -91,6 +91,16 @@ WHERE favorite = 0 AND _id IN (
     WHERE read = 1 OR last_page_read != 0
 );
 
+-- SY --> 2026-09-29 Part 2：按源取全部漫画。
+-- 用途：阅读器「本作读完 → 接下一部」。云盘/本地图源里**大量漫画并未加入书架**
+-- （实测：某源 3501 本、书架 0 本），而浏览时它们早已入库，
+-- 所以「同文件夹的下一部」只能从**同源全量**里找，不能只查书架。
+getMangasBySource:
+SELECT *
+FROM mangas
+WHERE source = :source;
+-- SY <--
+
 getAllManga:
 SELECT *
 FROM mangas;

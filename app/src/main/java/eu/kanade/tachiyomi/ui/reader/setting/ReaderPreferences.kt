@@ -117,6 +117,14 @@ class ReaderPreferences(
 
     // region Split two-page spread
 
+    // SY --> 2026-10-09 双页移植（上游 mihon_img_upscale 的 page_layout / invert_double_pages）
+    /** 页面布局：0=单页，1=双页，2=自动（横屏双页）。见 [PageLayout]。 */
+    val pageLayout: Preference<Int> = preferenceStore.getInt("page_layout", 0)
+
+    /** 双页模式下左右两页互换（阅读方向相反时开）。 */
+    val invertDoublePages: Preference<Boolean> = preferenceStore.getBoolean("invert_double_pages", false)
+    // SY <--
+
     val dualPageSplitPaged: Preference<Boolean> = preferenceStore.getBoolean("pref_dual_page_split", false)
 
     val dualPageInvertPaged: Preference<Boolean> = preferenceStore.getBoolean("pref_dual_page_invert", false)
@@ -308,7 +316,10 @@ class ReaderPreferences(
      */
     fun realCuganModel() = preferenceStore.getInt("pref_realcugan_model", Waifu2x.MODEL_ANIME4K_ACNET)
 
-    fun realCuganPreloadSize() = preferenceStore.getInt("pref_realcugan_preload_size", 3)
+    // SY 2026-09-29：本偏好现在**同时**驱动条漫预绑定窗口（WebtoonViewer.preloadWindowPx）。
+    // 默认从 3 改为 2：此前它没有消费者、UI 默认高亮 3，而 2026-09-29 A/B 实测 3 屏
+    // 「略微超出性能」、定档 2 屏。已手动选过档位的用户保持自己的选择。
+    fun realCuganPreloadSize() = preferenceStore.getInt("pref_realcugan_preload_size", 2)
 
     /** 0: 全速, 1: 50%, 2: 30%（越省电越慢） */
     fun realCuganPerformanceMode() = preferenceStore.getInt("pref_realcugan_performance_mode", 0)
@@ -373,14 +384,13 @@ class ReaderPreferences(
     fun realCuganShowStatus() = preferenceStore.getBoolean("pref_realcugan_show_status", false)
 
     /**
-     * SY --> 整话超分：开启后，进入章节时后台把**整章每一页**都丢进超分队列
-     * （不仅仅是用户滑到的那几页），并写入 [ImageEnhancementCache] 持久化。
-     * 在线源会被逐页联网拉取（见 HttpPageLoader.enqueueAllPagesForEnhancement）。
-     * 默认关闭：保持原来的「按需 + 预载」行为，避免一进章就打满网络与 GPU。
-     * 注意：本开关依赖 realCuganEnabled()，关闭增强时它自然不生效。
+     * SY --> 超分让路（2026-09-29 替换原「整话超分」开关）：开启后，触摸 / 滑动 / 开章时
+     * 超分全停、把算力让给流畅度（既有默认行为）；关闭后超分**一直全速跑**、从不让路。
+     * 所有让路入口（armUiBusyYield / notifyInteraction / 菜单打开时全停）都会实时读这个开关，
+     * 改动立即生效，无需重启阅读器。默认开启 = 与本开关引入前的行为完全一致。
      * SY <--
      */
-    fun realCuganWholeChapter() = preferenceStore.getBoolean("pref_realcugan_whole_chapter", false)
+    fun upscaleYieldEnabled() = preferenceStore.getBoolean("pref_upscale_yield_enabled", true)
     // SY <--
 
     companion object {

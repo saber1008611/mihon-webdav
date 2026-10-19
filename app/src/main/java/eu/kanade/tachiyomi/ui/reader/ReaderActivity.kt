@@ -6,12 +6,20 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.LayerDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -76,6 +84,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.webgpu.WebGpuViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.readerBackgroundColor
@@ -132,11 +141,41 @@ class ReaderActivity : BaseActivity() {
 
         /**
          * SY --> 连续模式「抬起 / 取消」后让超分全停的时长（ms），用于盖住惯性滑动尾巴。
-         * 比 UI_BUSY_COOLDOWN_MS 短得多：只是为了让 fling 期间 GPU 不被超分抢占，
-         * 手指停后很快恢复超分追帧（配合原生 ~800ms 的 recent_interaction 让出窗口）。
+         *
+         * ⚠️ 2026-09-28 修复「滑动时超分不让路」：原值 **350ms 盖不住惯性滑动**。
+         * 真机（Lenovo TB371FC / 骁龙870）实测一次 fling 常持续 1s 以上，350ms 后超分
+         * 就恢复跑 —— 正好落在肉眼可见的惯性滚动里，抢 CPU 与内存带宽，
+         * 直接表现为条漫严重掉帧（Janky(legacy) 33.42%、P50 10ms、绘制指令慢帧 183）。
+         * 现提到 **900ms**，并由 [notifyViewerScrolling] 在视图仍在滚动时持续**续期**，
+         * 直到真正停止滚动才恢复超分。
          * SY <--
          */
-        private const val CONTINUOUS_FLING_COOLDOWN_MS = 350L
+        private const val CONTINUOUS_FLING_COOLDOWN_MS = 900L
+
+        /**
+         * SY --> 视图滚动回调为「超分让路」续期的节流间隔（ms）。
+         * 滚动每帧都会回调 [notifyViewerScrolling]，没必要每帧都 cancel + 重建协程。
+         * SY <--
+         */
+        private const val SCROLL_YIELD_REARM_THROTTLE_MS = 120L
+
+        /**
+         * SY --> 2026-09-29：「打开 / 切换章节」后让超分**全停让路**的时长（ms）。
+         *
+         * 为什么需要：用户报「本地图源打开压缩包好慢」。真机取证（`su -c am start … ReaderActivity`）
+         * 发现同一批书连开三次的耗时是 868ms / 695ms / **8452ms**，而那 8.4 秒的窗口里同时出现：
+         *   · `thermal: CPU7temp 95.7 severity 3` ⇒ **CPU 重度限频**（采样到大核只有 960MHz，上限 3187MHz）；
+         *   · `ImageEnhancementCache: Saved page 57/ 58/…` ⇒ **上一本书的「整话超分」还在满负荷跑**；
+         *   · `Waifu2xNative: Processing complete … elapsed=585ms` ⇒ 每页约 0.6s GPU 满载。
+         * 即：整话超分长时间满载 ⇒ 发热 ⇒ 降频 ⇒ 此时「开归档」这种要 CPU 解压 + FUSE/binder
+         * 往返的操作全面变慢（数秒级）。
+         *
+         * 原先的让路只覆盖「滑动」（[onUiInteracted] / [notifyViewerScrolling]），**不覆盖「开章」**。
+         * 现在每章页面就绪（[setChapters]）以及原地换书（[onNewIntent]）都补一段全停，
+         * 把开章/首屏解码这几秒的 CPU/GPU 完整让给 UI；超分随后自动恢复继续追帧。
+         * SY <--
+         */
+        private const val CHAPTER_OPEN_YIELD_MS = 2500L
 
         /**
          * SY --> 左下角超分状态的刷新间隔，200ms。
@@ -179,9 +218,26 @@ class ReaderActivity : BaseActivity() {
     private var uiBusyJob: Job? = null
     // SY <--
 
+    // SY --> 2026-09-28 修复「滑动时超分不让路」新增：
+    /** ui_busy 当前是否已置位（避免滚动每帧重复下发 JNI）。 */
+    private var uiBusyFlagSet = false
+    /** 上次（重新）预约让路复位的时刻，用于节流。 */
+    private var lastYieldArmMs = 0L
+    // SY <--
+
     private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, window.decorView) }
 
     private var loadingIndicator: ReaderProgressIndicator? = null
+
+    // SY --> 2026-10-18：打开章节加载期背景。
+    //
+    // 「打开漫画/章节黑屏」发生在章节加载期：源还没返回页列表、页数据也还没下载，此时屏幕上
+    // 没有任何 holder、也没有页面数据可做低清预览，只有 readerContainer 的底色（深色主题 = 纯黑）。
+    // 这里垫一张本作封面（抽样到很小再放大 ⇒ 天然模糊，再压暗），既不是纯黑也不是纯白。
+    // 页面画出来之后封面被完全盖住；只有「没东西可画」的地方（加载窗口、页间间隙）才露出来。
+    private var loadingBackdrop: Drawable? = null
+    private var loadingBackdropPrepared = false
+    // SY <--
 
     var isScrollingThroughPages = false
         private set
@@ -212,6 +268,7 @@ class ReaderActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
 
         binding = ReaderActivityBinding.inflate(layoutInflater)
+
         setContentView(binding.root)
         binding.setComposeOverlay()
 
@@ -287,8 +344,18 @@ class ReaderActivity : BaseActivity() {
             .map { it.manga }
             .distinctUntilChanged()
             .filterNotNull()
-            .onEach { updateViewer() }
+            // SY --> 2026-09-29 OOM 排查加固：此前这里是裸 `onEach { updateViewer() }`。
+            // 一旦 updateViewer() 抛异常（例如 setOrientation / getMangaReadingMode 出问题），
+            // 整个 collector 会静默终止 —— 之后换书**再也不会重建 viewer**，旧 viewer 的视图树
+            // 会一直留在 viewerContainer 里（连带每个页面 holder 的整页位图，单页 25MB+），
+            // 表现为「Views 计数随换书单调增长 + Java 堆每次跳一档」。
+            // 包一层 runCatching：异常不再杀死 collector，且一定留痕。
+            .onEach {
+                runCatching { updateViewer() }
+                    .onFailure { e -> logcat(LogPriority.ERROR, e) { "ReaderActivity: updateViewer 失败" } }
+            }
             .launchIn(lifecycleScope)
+        // SY <--
 
         viewModel.state
             .map { it.viewerChapters }
@@ -318,6 +385,13 @@ class ReaderActivity : BaseActivity() {
                     is ReaderViewModel.Event.CopyImage -> {
                         onCopyImageResult(event.uri)
                     }
+                    // SY --> 2026-09-29 Part 2：整部看完 → 自动打开下一部漫画。
+                    // 用 newIntent（带 FLAG_ACTIVITY_CLEAR_TOP）重启阅读器：
+                    // 不堆叠多个 ReaderActivity，且等价于「无缝接着看下一部」。
+                    is ReaderViewModel.Event.OpenNextManga -> {
+                        openNextManga(event.mangaId, event.chapterId)
+                    }
+                    // SY <--
                     is ReaderViewModel.Event.SetCoverResult -> {
                         onSetAsCoverResult(event.result)
                     }
@@ -419,6 +493,7 @@ class ReaderActivity : BaseActivity() {
     override fun onDestroy() {
         uiBusyJob?.cancel()
         Waifu2x.setUiBusy(false)
+        uiBusyFlagSet = false
         super.onDestroy()
         viewModel.state.value.viewer?.destroy()
         config = null
@@ -478,30 +553,81 @@ class ReaderActivity : BaseActivity() {
         val continuous = isContinuousReadingMode()
         Waifu2x.setContinuousMode(continuous)
         if (continuous) {
-            when (action) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> Waifu2x.notifyInteraction()
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    Waifu2x.setUiBusy(true)
-                    uiBusyJob?.cancel()
-                    uiBusyJob = lifecycleScope.launch {
-                        delay(CONTINUOUS_FLING_COOLDOWN_MS)
-                        if (!viewModel.state.value.menuVisible) {
-                            Waifu2x.setUiBusy(false)
-                        }
-                    }
+            // 触摸中：刷新原生交互时间戳（让原生在 tile 边界平滑让出，不打断正在提交的块）。
+            if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE) {
+                // SY 2026-09-29：超分让路关闭时不刷新原生交互窗口（原生不会在 tile 边界让出），
+                // 否则原生侧仍会按交互时间戳降速，违背「关闭后一直超分」。
+                if (readerPreferences.upscaleYieldEnabled().get()) {
+                    Waifu2x.notifyInteraction()
                 }
             }
+            // SY --> 修复「滑动时超分不让路」：连续模式**同样走全停**。
+            // 旧逻辑在 DOWN/MOVE 只调 notifyInteraction()（原生仅部分让出），UP 后才全停
+            // 350ms —— 超分其实一直没真正停下来。现在只要还在交互就全停并持续续期。
+            // SY <--
+            armUiBusyYield(CONTINUOUS_FLING_COOLDOWN_MS)
             return
         }
         // 离散模式：触摸即全停让路（翻页 / 缩放期间整段暂停），冷却后恢复。
-        Waifu2x.setUiBusy(true)
+        armUiBusyYield(UI_BUSY_COOLDOWN_MS)
+    }
+
+    /**
+     * SY --> 让超分「全停让路」[delayMs]，冷却结束后恢复。
+     *
+     * 原生侧 ui_busy 为真时**一块 tile 都不提交**，从而把 GPU / CPU 让给 UI 渲染线程。
+     * 带节流：[notifyViewerScrolling] 会随滚动每帧回调，没必要每帧都 cancel + 重建协程；
+     * 且 ui_busy 已置位时不再重复下发 JNI。
+     * SY <--
+     */
+    private fun armUiBusyYield(delayMs: Long, force: Boolean = false) {
+        // SY 2026-09-29：超分让路开关——关闭时立即清掉让路状态，超分一直全速跑。
+        // 所有让路入口（触摸/滚动续期/开章 force/菜单打开）都经这里，开关实时读取。
+        if (!readerPreferences.upscaleYieldEnabled().get()) {
+            uiBusyJob?.cancel()
+            uiBusyJob = null
+            if (uiBusyFlagSet) {
+                Waifu2x.setUiBusy(false)
+                uiBusyFlagSet = false
+            }
+            return
+        }
+        if (!uiBusyFlagSet) {
+            Waifu2x.setUiBusy(true)
+            uiBusyFlagSet = true
+        }
+        val now = android.os.SystemClock.uptimeMillis()
+        // force=true 用于「开章」这类一次性、且需要**完整时长**的场景（不受滚动续期节流影响）。
+        if (!force && uiBusyJob != null && now - lastYieldArmMs < SCROLL_YIELD_REARM_THROTTLE_MS) return
+        lastYieldArmMs = now
         uiBusyJob?.cancel()
         uiBusyJob = lifecycleScope.launch {
-            delay(UI_BUSY_COOLDOWN_MS)
+            delay(delayMs)
             if (!viewModel.state.value.menuVisible) {
                 Waifu2x.setUiBusy(false)
+                uiBusyFlagSet = false
             }
         }
+    }
+
+    /**
+     * SY --> 视图**仍在滚动**（含惯性 / fling）时由 viewer 回调，持续为「超分让路」续期，
+     * 直到真正停止滚动才让超分恢复。
+     *
+     * 这是「滑动时超分不让路」的主因修复：fling 期间**没有任何触摸事件**，旧逻辑只能靠
+     * UP 后那段固定 350ms 冷却，而一次 fling 常持续 1s 以上 —— 超分在惯性滚动的
+     * 后半段就恢复跑了，抢 CPU 与内存带宽，表现为条漫严重掉帧。
+     * SY <--
+     */
+    fun notifyViewerScrolling() {
+        if (!isContinuousReadingMode()) return
+        armUiBusyYield(CONTINUOUS_FLING_COOLDOWN_MS)
+        // SY --> 2026-09-28：顺带刷新「滑动门控」，让网络取图在滑动期间让路。
+        // 用户需求：「让 webdav 按顺序取图，取完图再滑，**滑动时不取图**」——
+        // 取图（下载 / 解码 / 落盘）与滚动渲染同时进行会抢 CPU、IO 与内存带宽，
+        // 这正是未缓存的 WebDAV 滑动掉帧的直接原因。见 [ReaderScrollGate]。
+        // SY <--
+        ReaderScrollGate.notifyScrolling()
     }
 
     /**
@@ -528,6 +654,49 @@ class ReaderActivity : BaseActivity() {
         super.onResume()
         viewModel.restartReadTimer()
         setMenuVisibility(viewModel.state.value.menuVisible)
+    }
+
+    /**
+     * SY --> 2026-09-29：⚠️ 这里曾试过「把阅读器窗口刷新率锁到 60Hz」（`preferredDisplayModeId`），
+     * 用户明确否决 —— **不能锁帧**（同源的在线源在 144Hz 下并不卡，说明渲染器本身跑得动高刷；
+     * 高刷预算不足不是真因）。代码已彻底移除，不要再加回来。
+     * SY <--
+     */
+
+    /**
+     * SY --> 2026-09-29 Part 2：本 Activity 在 manifest 里是 `launchMode="singleTask"`。
+     *
+     * 「本作读完 → 打开下一部」用 [newIntent] 再 startActivity 时，系统判定为
+     * `START_DELIVERED_TO_TOP`（真机 ATM 日志实测 `result code=3`）：intent 交给**已有实例**的
+     * `onNewIntent`，**不会新建实例**。此前没有覆写本方法 ⇒ 新 manga/chapter 参数被静默丢弃，
+     * 表现就是「完全没有自动接上」。
+     *
+     * 现在在这里接手：委托 ViewModel **原地换书**（同一个 ViewModel 内换 manga/source/loader，
+     * 不重启 Activity，也就没有黑屏/闪一下，真正意义上的「无缝」）。
+     * SY <--
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+
+        val newMangaId = intent.getLongExtra("manga", -1L)
+        val newChapterId = intent.getLongExtra("chapter", -1L)
+        if (newMangaId <= 0L || newChapterId <= 0L) return
+        if (newMangaId == viewModel.mangaId) return
+
+        logcat(LogPriority.INFO) {
+            "ReaderActivity: onNewIntent 原地换书 mangaId=$newMangaId chapterId=$newChapterId"
+        }
+        setIntent(intent)
+        // 换书成功后再读到末尾，应能再次触发「接下一部」。
+        nextMangaOpened = false
+        // 触发方（viewer 在末尾）会顺手 showMenu()，换书时把它收起来，免得新书一上来就盖着菜单。
+        hideMenu()
+        // SY --> 2026-09-29：换书要重新开归档 + 建 loader，这段最需要 CPU/IO；
+        // 先把超分全停（见 [CHAPTER_OPEN_YIELD_MS]），否则上一本仍在跑的整话超分会把
+        // 机器烤到限频、把开书拖到数秒级。setChapters 之后还会再续一次。
+        armUiBusyYield(CHAPTER_OPEN_YIELD_MS, force = true)
+        // SY <--
+        viewModel.switchToManga(newMangaId, newChapterId)
     }
 
     /**
@@ -697,8 +866,11 @@ class ReaderActivity : BaseActivity() {
         viewModel.showMenus(visible)
         if (visible) {
             // SY --> 菜单（含设置面板）打开时让超分彻底停住，避免推理抢 GPU 导致菜单卡顿。
-            uiBusyJob?.cancel()
-            Waifu2x.setUiBusy(true)
+            // 随「超分让路」开关：关闭让路时保持超分全速（用户要求关闭后一直超分）。
+            if (readerPreferences.upscaleYieldEnabled().get()) {
+                uiBusyJob?.cancel()
+                Waifu2x.setUiBusy(true)
+            }
             // SY <--
             windowInsetsController.show(WindowInsetsCompat.Type.systemBars())
         } else {
@@ -779,11 +951,23 @@ class ReaderActivity : BaseActivity() {
             setOrientation(viewModel.getMangaOrientation())
         }
 
-        // Destroy previous viewer if there was one
+        // SY --> 2026-09-29 OOM 修复：**无条件**清空 viewerContainer。
+        // 上游只在 `prevViewer != null` 时才 removeAllViews；但「原地换书」会反复调到这里，
+        // 一旦上一次中途抛异常（见 manga collector 的 runCatching）或 prevViewer 为 null，
+        // 容器里就会**残留旧 viewer 的视图树**——它带着每个页面 holder 的整页位图
+        // （单页 25MB+，实测 OOM 分配点即 SSIV 的 TilesInitTask），且因为一直 attached
+        // 而永远不会进 GC。真机实测：Views 计数随换书单调增长（13→71→101→128），
+        // Java 堆每次换书跳一档（24→204→262→394MB）。这里必须先保证容器干净。
+        logcat(LogPriority.INFO) {
+            "updateViewer: 重建 viewer（prev=${prevViewer?.javaClass?.simpleName} " +
+                "viewerContainer.childCount=${binding.viewerContainer.childCount} " +
+                "readerContainer.childCount=${binding.readerContainer.childCount}）"
+        }
         if (prevViewer != null) {
             prevViewer.destroy()
-            binding.viewerContainer.removeAllViews()
         }
+        binding.viewerContainer.removeAllViews()
+        // SY <--
         viewModel.onViewerLoaded(newViewer)
         updateViewerInset(readerPreferences.fullscreen.get(), readerPreferences.drawUnderCutout.get())
         binding.viewerContainer.addView(newViewer.getView())
@@ -792,8 +976,15 @@ class ReaderActivity : BaseActivity() {
             showReadingModeToast(viewModel.getMangaReadingMode())
         }
 
+        // SY --> 2026-09-29 OOM 修复：**先移除上一个 loadingIndicator**。
+        // `ReaderProgressIndicator` 是 Compose 视图（AbstractComposeView，组合策略为
+        // DisposeOnDetachedFromWindow），而旧代码每次 updateViewer 都 new 一个再 addView，
+        // 只由 setChapters 移除「最新的那一个」⇒ 换书时旧的会**永久 attached** 在
+        // readerContainer 上：既算活视图，其 Compose 组合也永不 dispose。
+        loadingIndicator?.let { binding.readerContainer.removeView(it) }
         loadingIndicator = ReaderProgressIndicator(this)
         binding.readerContainer.addView(loadingIndicator)
+        // SY <--
 
         startPostponedEnterTransition()
 
@@ -846,6 +1037,48 @@ class ReaderActivity : BaseActivity() {
         }
     }
 
+    // SY --> 2026-10-18：加载期封面背景（见 [loadingBackdrop] 注释）。
+    //
+    // 只解码很小的一张：封面抽样到 ~72px 宽后用 FILL + 线性插值铺满屏幕，放大本身就带来模糊，
+    // 再叠一层半透明黑压暗；纯 CPU、几毫秒、单次，不额外引入依赖（项目里没有 blur 工具）。
+    private fun prepareLoadingBackdrop() {
+        if (loadingBackdropPrepared) return
+        val file = viewModel.loadingBackdropFile() ?: return
+        loadingBackdropPrepared = true
+        lifecycleScope.launchIO {
+            val backdrop = runCatching {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.path, bounds)
+                var sampleSize = 1
+                while (bounds.outWidth / (sampleSize * 2) >= 72) {
+                    sampleSize *= 2
+                }
+                val options = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                val bitmap = BitmapFactory.decodeFile(file.path, options) ?: return@runCatching null
+                val cover = BitmapDrawable(resources, bitmap).apply {
+                    gravity = Gravity.FILL
+                    isFilterBitmap = true
+                }
+                LayerDrawable(arrayOf(cover, ColorDrawable(0xA6000000.toInt())))
+            }.getOrNull() ?: return@launchIO
+            withUIContext {
+                loadingBackdrop = backdrop
+                updateReaderBackground()
+            }
+        }
+    }
+
+    /** 重设阅读器底色：有加载期封面就用它，否则用主题色。 */
+    private fun updateReaderBackground() {
+        val backdrop = loadingBackdrop
+        binding.readerContainer.background = backdrop
+            ?: ColorDrawable(baseContext.readerBackgroundColor(readerPreferences.readerTheme.get()))
+    }
+    // SY <--
+
     /**
      * Called from the presenter whenever a new [viewerChapters] have been set. It delegates the
      * method to the current viewer, but also set the subtitle on the toolbar, and
@@ -855,6 +1088,12 @@ class ReaderActivity : BaseActivity() {
     private fun setChapters(viewerChapters: ViewerChapters) {
         binding.readerContainer.removeView(loadingIndicator)
         viewModel.state.value.viewer?.setChapters(viewerChapters)
+
+        // SY --> 2026-09-29：开章 / 切章（含原地换书）后让超分全停数秒。
+        // 页面就绪的这一刻正是首屏解码 + 贴图最需要 CPU/GPU 的时候，而整话超分此时往往
+        // 正在满负荷跑（并已把机器烤到限频）。见 [CHAPTER_OPEN_YIELD_MS]。
+        armUiBusyYield(CHAPTER_OPEN_YIELD_MS, force = true)
+        // SY <--
 
         lifecycleScope.launchIO {
             viewModel.getChapterUrl()?.let { url ->
@@ -919,6 +1158,28 @@ class ReaderActivity : BaseActivity() {
             moveToPageIndex(0)
         }
     }
+
+    // SY --> 2026-09-29 Part 2：整部看完 → 打开下一部漫画。
+    //
+    // 用 [ReaderActivity.newIntent] 重启阅读器（intent 带 FLAG_ACTIVITY_CLEAR_TOP，
+    // 不会堆叠多个阅读器实例）。
+    // 只做一次（用 nextMangaOpened 去重）：避免末尾反复触发导致连开多个。
+    private var nextMangaOpened = false
+
+    private fun openNextManga(mangaId: Long, chapterId: Long) {
+        if (nextMangaOpened) return
+        nextMangaOpened = true
+        logcat(LogPriority.INFO) { "ReaderActivity: 本作已读完，衔接下一部 mangaId=$mangaId chapterId=$chapterId" }
+        startActivity(newIntent(this, mangaId, chapterId))
+    }
+
+    /**
+     * 由 viewer 在「滑到末尾且已无下一话」时调用：请求衔接下一部漫画。
+     */
+    fun requestNextMangaOnFinish() {
+        viewModel.requestNextMangaOnFinish()
+    }
+    // SY <--
 
     /**
      * Called from the viewer whenever a [page] is marked as active. It updates the values of the
@@ -1021,6 +1282,15 @@ class ReaderActivity : BaseActivity() {
     }
 
     /**
+     * SY 2026-10-09 双页移植：页面布局 = 「自动」时，横屏双页 / 竖屏单页要跟着朝向切换。
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        (viewModel.state.value.viewer as? eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer)
+            ?.refreshAutomaticPageLayout()
+    }
+
+    /**
      * Forces the user preferred [orientation] on the activity.
      */
     private fun setOrientation(orientation: Int) {
@@ -1093,10 +1363,17 @@ class ReaderActivity : BaseActivity() {
          */
         init {
             readerPreferences.readerTheme.changes()
-                .onEach { theme ->
-                    binding.readerContainer.setBackgroundColor(baseContext.readerBackgroundColor(theme))
-                }
+                .onEach { updateReaderBackground() }
                 .launchIn(lifecycleScope)
+
+            // SY --> 2026-10-18：manga 一到手就准备加载期封面背景（越早越好，赶在首屏黑屏之前）。
+            viewModel.state
+                .map { it.manga }
+                .filterNotNull()
+                .distinctUntilChanged()
+                .onEach { prepareLoadingBackdrop() }
+                .launchIn(lifecycleScope)
+            // SY <--
 
             readerPreferences.keepScreenOn.changes()
                 .onEach(::setKeepScreenOn)
@@ -1123,6 +1400,28 @@ class ReaderActivity : BaseActivity() {
                     updateViewerInset(fullscreen, drawUnderCutout)
                 }
                 .launchIn(lifecycleScope)
+
+            // SY 2026-09-29：超分让路开关——关闭时立即清掉当前让路状态（点击后立即生效，
+            // 不等下一次触摸/滚动）。
+            readerPreferences.upscaleYieldEnabled().changes()
+                .onEach { enabled ->
+                    if (!enabled) {
+                        uiBusyJob?.cancel()
+                        uiBusyJob = null
+                        Waifu2x.setUiBusy(false)
+                        uiBusyFlagSet = false
+                    }
+                }
+                .launchIn(lifecycleScope)
+
+            // SY 2026-09-29：「预载页数」变化后立即对当前条漫阅读器重设预绑定窗口
+            // （点击即生效，无需重开章节；翻页模式由 PagerConfig 的监听走 refreshAdapter）。
+            readerPreferences.realCuganPreloadSize().changes()
+                .onEach {
+                    (viewModel.state.value.viewer as? WebtoonViewer)?.refreshPreloadWindow()
+                }
+                .launchIn(lifecycleScope)
+            // SY <--
         }
 
         /**

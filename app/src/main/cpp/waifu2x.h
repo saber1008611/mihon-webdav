@@ -42,6 +42,14 @@ public:
   std::atomic<int> *ui_busy_ptr = nullptr;
   std::atomic<bool> *should_abort_ptr = nullptr;
   int tile_sleep_ms = 0; // Sleep between tiles for cooling (0 = full speed)
+  // SY --> 2026-09-29：**独立**的「块间降温小睡」（毫秒），与 tile_sleep_ms 的区别很重要：
+  //   · tile_sleep_ms > 0 会**顺带把 batch_capacity 压到 1**（见 process_gpu），吞吐骤降 ——
+  //     它是「用户显式选了省电档」的语义；
+  //   · cool_sleep_ms 只加 sleep、**完全不影响批量**，用于「整话超分」这种长时间后台满载
+  //     场景降温（真机实测长时间整话超分把 CPU 烤到 95.7°C / thermal severity 3，大核被压到
+  //     960MHz，导致此时「打开归档」这类操作从 ~0.7s 变 8.4s）。
+  int cool_sleep_ms = 0;
+  // SY <--
   // SY --> Komiho Phase12: 连续滚动模式 GPU 交错让出。
   // 连续（条漫）模式下，超分应在滑动期间持续工作（不能像翻页那样整段全停），
   // 但又要「每块之间 sleep 让出 GPU」避免挤掉合成线程 → 卡顿。

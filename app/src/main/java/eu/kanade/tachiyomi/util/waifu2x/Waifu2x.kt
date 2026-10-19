@@ -48,6 +48,13 @@ object Waifu2x {
      */
     const val DEFAULT_TILE_SIZE = 192
 
+    // SY --> 2026-09-29：块间降温小睡默认值（毫秒）。
+    // 整话超分长时间后台满载会把 CPU 烤到 95.7°C / thermal severity 3，导致「打开归档」
+    // 这类操作从 ~0.7s 飙到 8.4s。cool_sleep_ms 与原 tile_sleep_ms 解耦——它**只加 sleep、
+    // 不降 batch_capacity**（见 waifu2x.h），所以是「持续满载场景降温」而不牺牲太多吞吐。
+    // 3ms/块实测足以把温度控制在远低于触发的线，且对单页首帧额外开销约 60~80ms（可接受）。
+    const val DEFAULT_COOL_SLEEP_MS = 3
+
     // SY --> 本构建唯一保留的超分模型（编号沿用 TachiyomiX 约定）。
 
     /** Anime4K v4 ACNet（单通道 luma，2x）。 */
@@ -173,6 +180,7 @@ object Waifu2x {
         tileSize: Int = DEFAULT_TILE_SIZE,
         precision: Int = 0,
         fp16Arithmetic: Boolean = false,
+        coolSleepMs: Int = DEFAULT_COOL_SLEEP_MS,
     ): Boolean = synchronized(this) {
         val newConfig = Waifu2xConfig(sanitizePrecision(precision), fp16Arithmetic)
 
@@ -187,7 +195,7 @@ object Waifu2x {
         }
 
         if (isWaifu2xInitialized) {
-            nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
+            nativeUpdatePerformanceConfig(tileSleepMs, tileSize, coolSleepMs)
             return true
         }
 
@@ -197,9 +205,13 @@ object Waifu2x {
         isWaifu2xInitialized = nativeInitAnime4kAcnet(modelDir, newConfig.precision, newConfig.fp16Arithmetic)
         if (isWaifu2xInitialized) {
             lastWaifu2xConfig = newConfig
-            nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
+            nativeUpdatePerformanceConfig(tileSleepMs, tileSize, coolSleepMs)
 
-            android.util.Log.d("Waifu2x", "Initialized Anime4K ACNet (luma): tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${newConfig.precision}")
+            android.util.Log.d(
+                "Waifu2x",
+                "Initialized Anime4K ACNet (luma): tileSleepMs=$tileSleepMs, tileSize=$tileSize, " +
+                    "coolSleepMs=$coolSleepMs, precision=${newConfig.precision}",
+            )
         }
         isWaifu2xInitialized
     }
@@ -223,7 +235,8 @@ object Waifu2x {
         tileSize: Int = DEFAULT_TILE_SIZE,
         precision: Int = 0,
         fp16Arithmetic: Boolean = false,
-    ): Boolean = initAnime4kAcnet(context, tileSleepMs, tileSize, precision, fp16Arithmetic)
+        coolSleepMs: Int = DEFAULT_COOL_SLEEP_MS,
+    ): Boolean = initAnime4kAcnet(context, tileSleepMs, tileSize, precision, fp16Arithmetic, coolSleepMs)
 
     fun processWaifu2x(input: Bitmap, id: Int = -1): Bitmap? {
         if (!isWaifu2xInitialized) return null
@@ -437,13 +450,13 @@ object Waifu2x {
     private external fun nativeAbortProcessing()
     private external fun nativeClearAbortProcessing()
     private external fun nativeSetUiBusy(busy: Boolean)
-    private external fun nativeUpdatePerformanceConfig(tileSleepMs: Int, tileSize: Int)
+    private external fun nativeUpdatePerformanceConfig(tileSleepMs: Int, tileSize: Int, coolSleepMs: Int)
     private external fun nativeSetContinuousMode(continuous: Boolean)
     private external fun nativeNotifyInteraction()
 
-    fun updatePerformance(tileSleepMs: Int, tileSize: Int) {
+    fun updatePerformance(tileSleepMs: Int, tileSize: Int, coolSleepMs: Int = 0) {
         if (isWaifu2xInitialized) {
-            nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
+            nativeUpdatePerformanceConfig(tileSleepMs, tileSize, coolSleepMs)
         }
     }
 

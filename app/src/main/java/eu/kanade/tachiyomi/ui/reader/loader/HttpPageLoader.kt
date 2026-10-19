@@ -53,7 +53,17 @@ internal class HttpPageLoader(
      */
     private val queue = PriorityBlockingQueue<PriorityPage>()
 
-    private val preloadSize = 4
+    // SY 2026-09-29：恢复基线（mihon_img_upscale）语义——「预载页数」偏好决定加载某页时
+    // 顺带往后排队下载的页数（见 loadPage → preloadNextPages）；超分关闭时保持原硬编码 4。
+    private val preloadSize: Int
+        get() {
+            val prefs = readerPreferencesOrNull ?: return 4
+            return if (prefs.realCuganEnabled().get()) {
+                prefs.realCuganPreloadSize().get().coerceIn(1, 8)
+            } else {
+                4
+            }
+        }
 
     init {
         scope.launchIO {
@@ -156,28 +166,6 @@ internal class HttpPageLoader(
             }
         }
     }
-
-    // SY --> 整话超分：把本章所有仍处于 Queue 状态的页一次性投入「下载 + 超分」队列。
-    //
-    // consumer 循环（init 里的 flow）会逐个跑 internalLoadPage：联网拉取 → 落盘 →
-    // 触发 enhance()。已经 Ready/Error 的页不会被重复投入（consumer 端按 status == Queue 过滤），
-    // 去重再由 enhance() 的 isCached/pendingRequests 闸门兜底 —— 不会出现整章白算一遍。
-    // 在线源「逐页联网拉整话」正是这一行带来的副作用：开关在 ReaderViewModel 判断是否打开。
-    override fun enqueueAllPagesForEnhancement() {
-        if (readerPreferencesOrNull?.realCuganWholeChapter()?.get() != true) return
-        val pages = chapter.pages ?: return
-        var enqueued = 0
-        pages.forEach { page ->
-            if (page.status == Page.State.Queue) {
-                queue.offer(PriorityPage(page, PriorityPage.ADJACENT))
-                enqueued++
-            }
-        }
-        logcat(LogPriority.DEBUG) {
-            "HttpPageLoader: whole-chapter enhancement enqueued $enqueued / ${pages.size} pages"
-        }
-    }
-    // SY <--
 
     /**
      * Preloads the given [amount] of pages after the [currentPage] with a lower priority.

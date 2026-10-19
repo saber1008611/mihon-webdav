@@ -70,17 +70,29 @@ enum class ReadingMode(
         }
 
         fun toViewer(preference: Int?, activity: ReaderActivity): Viewer {
-            if (activity.appGraph.basePreferences.highQualityRenderer.get()) {
-                return when (fromPreference(preference)) {
+            // SY --> 2026-09-28：条漫（WEBTOON / CONTINUOUS_VERTICAL）**不再**走 WebGpu
+            // 连续渲染器，一律回到经典 [WebtoonViewer]。
+            //
+            // 背景：§四十九「性能优化批次」把 `highQualityRenderer` 默认打开后，条漫被路由到
+            // [WebGpuViewerContinuous]（并附带「点击缓出滚动 + 关闭双击缩放」等手感改造）。
+            // 真机（Lenovo TB371FC / 骁龙870 / 1840x2944 @120~144Hz）实测该内核在条漫滑动时
+            // 掉帧严重：`dumpsys gfxinfo` Janky(legacy) 33.42%、P50 10ms、P99 93ms。
+            // 用户要求「把之前版本新增的条漫优化去掉，换回我们以前的条漫」，故此处回退。
+            //
+            // 翻页类模式（LTR / RTL / VERTICAL）仍按 [highQualityRenderer] 选择 WebGpu，不受影响。
+            // SY <--
+            val mode = fromPreference(preference)
+            val useWebGpu = activity.appGraph.basePreferences.highQualityRenderer.get() &&
+                mode.type is ViewerType.Pager
+            if (useWebGpu) {
+                return when (mode) {
                     LEFT_TO_RIGHT -> WebGpuViewer(activity, isReversed = false, isVertical = false)
                     RIGHT_TO_LEFT -> WebGpuViewer(activity, isReversed = true, isVertical = false)
                     VERTICAL -> WebGpuViewer(activity, isReversed = false, isVertical = true)
-                    WEBTOON -> WebGpuViewerContinuous(activity, useGap = false)
-                    CONTINUOUS_VERTICAL -> WebGpuViewerContinuous(activity, useGap = true)
-                    DEFAULT -> throw IllegalStateException("Preference value must be resolved: $preference")
+                    else -> throw IllegalStateException("Preference value must be resolved: $preference")
                 }
             }
-            return when (fromPreference(preference)) {
+            return when (mode) {
                 LEFT_TO_RIGHT -> L2RPagerViewer(activity)
                 RIGHT_TO_LEFT -> R2LPagerViewer(activity)
                 VERTICAL -> VerticalPagerViewer(activity)

@@ -10,7 +10,7 @@ import java.io.InputStream
 /**
  * Wrapper over ArchiveReader to load files in epub format.
  */
-class EpubReader(private val reader: ArchiveReader) : Closeable by reader {
+class EpubReader(private val reader: ArchiveHandle) : Closeable by reader {
 
     /**
      * Path separator used by this epub.

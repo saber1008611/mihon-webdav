@@ -9,6 +9,7 @@ import android.view.View
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
+import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceIn
@@ -286,7 +287,8 @@ open class WebGpuViewer(
         }
     }
 
-    open val preloadAhead = 3
+    // MIHON 2026-09-28：预载窗口前向 3 → 4，翻页更跟手（cacheSize 随之自动增大）。
+    open val preloadAhead = 4
     open val preloadBehind = 2
 
     /**
@@ -538,16 +540,29 @@ open class WebGpuViewer(
                     }
 
                     val start = progressValue
-                    progressJob = scope.launch {
-                        animate(
-                            start,
-                            target,
-                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                        ) { current, _ ->
-                            progressValue = current
+                    // SY --> 2026-09-28 崩溃修复：Compose 的 animate() 需要 CoroutineContext 里有
+                    // MonotonicFrameClock，而这里的 `scope`（WebGpuViewer.scope = MainScope()）
+                    // 只带 Dispatchers.Main，直接 launch 会抛 IllegalStateException 并杀进程。
+                    // 用 AndroidUiDispatcher.Main（既是 Dispatcher 也是 MonotonicFrameClock）。
+                    progressJob = scope.launch(AndroidUiDispatcher.Main) {
+                        try {
+                            animate(
+                                start,
+                                target,
+                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                            ) { current, _ ->
+                                progressValue = current
+                                invalidate()
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            // 兜底：直接落到目标值，不抛异常（抛出会杀掉进程）。
+                            progressValue = target
                             invalidate()
                         }
                     }
+                    // SY <--
                 }
             }
 

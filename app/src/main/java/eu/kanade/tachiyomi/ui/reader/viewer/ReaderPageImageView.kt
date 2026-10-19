@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.drawable.Animatable
@@ -87,6 +88,17 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private var pageView: View? = null
 
+    /**
+     * SY --> 当前视图**已就绪**的图片高宽比 (height / width)；未就绪返回 null。
+     * 供持有人在解码完成（onImageLoaded）后回填 [eu.kanade.tachiyomi.ui.reader.model.ReaderPage.knownAspectRatio]，
+     * 下次（含回收重绑）绑定时据此提前把 item 高度定到最终值，消除条漫往回滑的高度突变跳动。
+     * SY <--
+     */
+    val readyAspectRatio: Float?
+        get() = (pageView as? SubsamplingScaleImageView)
+            ?.takeIf { it.sWidth > 0 && it.sHeight > 0 }
+            ?.let { it.sHeight.toFloat() / it.sWidth.toFloat() }
+
     private var config: Config? = null
 
     // SY --> 超分移植：本视图有没有资格决定「用户当前在读哪一页」。
@@ -104,11 +116,42 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private var processingJob: Job? = null
 
+    // SY --> 图片解码任务句柄 + 代次。
+    //
+    // 历史上这段还兼管「超大图降采样」，现已移除（见 setImageCapped 上方注释）；
+    // 现在只用于把 `setImage` 从主线程挪到 IO，并用代次丢弃过期结果。
+    //
+    // 保留的历史教训（2026-09-26 实测，结论依然有效）：降采样曾是**主线程同步**做的，
+    // 本机常见「双页 8K 扫描」3309×2500 / 5620×2500（PNG）一页解码 100ms+，
+    // framestats 显示 HandleInputStart − IntendedVsync = 141ms、Vsync 迟到 133ms
+    // ⇒ 绘制极轻但**主线程在开帧前就被占死**，表现为「任何格式滑动都掉帧」。
+    // 所以：**解码绝不能在主线程做**。
+    private var capDecodeJob: Job? = null
+    private var capDecodeGeneration = 0
+    // SY <--
+
     /** 正在交叉淡入的「增强图」视图；ready 后接管显示。 */
     private var processedSwapView: SubsamplingScaleImageView? = null
 
     /** 被替换掉的旧视图，淡入结束后回收。 */
     private var outgoingProcessedView: SubsamplingScaleImageView? = null
+
+    // SY --> 2026-10-18：本页低清预览（blur-up 占位）的状态。
+    //
+    // 条漫每次重绑都要让 SSIV 重新分块解码，解码窗口里 SSIV 画不出任何像素，看的只是
+    // 「View 自己的 background」。纯白底 = 白闪、没底 = 黑闪，两者用户都不接受，
+    // 所以改成垫这一页自己的低清缩略图（见 PagePreviewCache）。
+    //
+    // previewKey  当前绑定的这一页在预览缓存里的定位信息；
+    // previewJob  正在后台生成预览的任务（读超分缓存文件，本地 I/O）；
+    // previewGeneration  代次，保证迟到的预览不会贴到已经换了页的视图上。
+    private var previewKey: PagePreviewCache.Key? = null
+    private var previewJob: Job? = null
+    private var previewGeneration = 0
+
+    /** 这一页的图片是否已经画出来了（决定 frame 层的预览要不要撤掉）。 */
+    private var imageReady = false
+    // SY <--
 
     /** 当前这一页（用于取不到 stream 时兜底）。 */
     var readerPage: ReaderPage? = null
@@ -139,7 +182,28 @@ open class ReaderPageImageView @JvmOverloads constructor(
     @CallSuper
     open fun onImageLoaded() {
         onImageLoaded?.invoke()
-        background = pageBackground
+        // SY --> 修「底部白图一闪而过」（2026-09-27）：
+        //
+        // 原先这里**无条件** `background = pageBackground`。条漫模式下 pageBackground 恒为
+        // null ⇒ 图片一就绪就把帧背景清空成透明，于是透出阅读器主题色——浅色主题下就是
+        // 一片白，表现为「出图瞬间底部白图一闪而过」。
+        //
+        // 页面图像本身是**不透明且铺满**帧的，背景色在图显示后本就看不到；真正需要背景的
+        // 是「图还没画出来」的那一瞬。所以这里只在「自动背景特性真的给了颜色」
+        // （pageBackground != null，翻页模式的 automaticBackground）时才去设它；
+        // 其余情况（条漫 / 自动背景关闭）保留既有占位底色（页面自身边缘色），
+        // 既不闪黑也不闪白。
+        // SY <--
+        if (pageBackground != null) {
+            background = pageBackground
+        } else if (previewKey != null) {
+            // SY --> 2026-10-18：预览占位只在「图还没画出来」时有价值 —— 图一就绪立刻撤掉，
+            // 否则每一页都会留一层全屏 overdraw（历史实测：frame 常驻背景会让条漫滚动掉帧）。
+            // 撤掉之后解码窗口外侧露出的仍是 SSIV 自己的预览背景，所以不会闪。
+            background = null
+            // SY <--
+        }
+        imageReady = true
     }
 
     @CallSuper
@@ -239,6 +303,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         enhanceKey: EnhanceKey? = null,
         streamFn: (() -> InputStream)? = null,
         readerPage: ReaderPage? = null,
+        previewKey: PagePreviewCache.Key? = null,
     ) {
         this.config = config
         // SY --> 超分移植：逐页状态 TextView 已移除（改由 ReaderActivity 的全局状态视图负责），
@@ -249,25 +314,41 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setAnimatedImage(source, config)
         } else {
             prepareNonAnimatedImageView()
-            setNonAnimatedImage(source, config, enhanceKey, streamFn, readerPage)
+            setNonAnimatedImage(source, config, enhanceKey, streamFn, readerPage, previewKey)
         }
     }
 
-    fun recycle() = pageView?.let {
-        processingJob?.cancel()
-        processingJob = null
-        clearProcessedSwapView()
-        when (it) {
-            is SubsamplingScaleImageView -> it.recycle()
-            is AppCompatImageView -> it.dispose()
+    fun recycle() {
+        // SY --> 2026-10-18：取消未完成的预览生成，并撤掉 frame 上的预览占位
+        // （holder 会被复用去显示别的页，留着上一页的模糊图会「串页」）。
+        clearPagePreview()
+        // SY <--
+        pageView?.let {
+            processingJob?.cancel()
+            processingJob = null
+            // SY --> 作废还没跑完的降采样解码，避免把解码结果贴到已回收的视图上
+            capDecodeJob?.cancel()
+            capDecodeJob = null
+            capDecodeGeneration++
+            // SY <--
+            clearProcessedSwapView()
+            when (it) {
+                is SubsamplingScaleImageView -> it.recycle()
+                is AppCompatImageView -> it.dispose()
+            }
+            it.isVisible = false
         }
-        it.isVisible = false
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         processingJob?.cancel()
         processingJob = null
+        // SY --> 同上：离开窗口后取消未完成的降采样解码
+        capDecodeJob?.cancel()
+        capDecodeJob = null
+        capDecodeGeneration++
+        // SY <--
     }
 
     /**
@@ -355,9 +436,103 @@ open class ReaderPageImageView @JvmOverloads constructor(
         if (pageView is SubsamplingScaleImageView) return
         removeView(pageView)
 
-        pageView = newSubsamplingView()
+        // SY --> 条漫占位底色：白色放在「SSIV 自身背景」上，而不是外层 frame。
+        //
+        // 之前把 frame 设为不透明白背景，等于给每一页都垫了一层全屏白 → 大面积 overdraw，
+        // 平板高分辨率下 GPU 填充压力上升 → 滚动卡顿；且白色在深色主题背景上刺眼 → 白闪。
+        //
+        // 2026-10-18 更新：**纯白已经不再是最终形态**。这里设的白只是「预览还没生成好」的
+        // 兜底（通常只存在几十毫秒）；真正的占位是这一页自己的低清预览，
+        // 由 applyPagePreview() 在这之后立刻换上，见 PagePreviewCache 的说明。
+        // SY <--
+        pageView = newSubsamplingView().also {
+            it.setBackgroundColor(Color.WHITE)
+        }
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
     }
+
+    // SY --> 2026-10-18：低清预览（blur-up）占位。
+    //
+    // 条漫场景下「解码窗口」有三处会露出底色，这里一次解决：
+    //   1) SSIV 已经 setImage、但分块解码还没出像素 → SSIV 自身背景；
+    //   2) 超分换图后新建的 swap 视图（随后成为常驻 pageView）→ 同样垫预览，绝不留透明；
+    //   3) 页面数据还没下载下来（Queue/LoadPage/DownloadImage），frame 里只有转圈 →
+    //      frame 自身背景（只有这一种情况才允许垫 frame，且图一就绪立刻撤掉，避免 overdraw）。
+    fun applyPagePreview(key: PagePreviewCache.Key?) {
+        if (previewKey != key) {
+            previewGeneration++
+            previewJob?.cancel()
+            previewJob = null
+        }
+        previewKey = key
+
+        val cached = PagePreviewCache.get(key)
+        val drawable = cached?.let { BitmapDrawable(resources, it) }
+
+        // 没有预览时**留透明**，不再兜白色：透明会露出阅读器底下的封面底图（ReaderActivity 的
+        // loadingBackdrop），是内容而不是纯色。2026-10-18 用户明确「黑底白底都不能接受」。
+        (pageView as? SubsamplingScaleImageView)?.background = drawable
+
+        // frame 层：只有「图还没画出来」时才垫。没有预览就保持透明（历史行为，不额外引入纯色）。
+        if (!imageReady) background = drawable
+
+        if (cached == null && previewJob?.isActive != true) {
+            buildPagePreview(key)
+        }
+    }
+
+    /**
+     * 预览按**显示宽度**解码（再留 15% 余量，见 [PagePreviewCache.previewTargetWidthFor]）。
+     *
+     * 2026-10-18 修正：最初按 240px 宽解码（约屏宽 1/4），放大 4.5 倍后滑动中肉眼可见地糊，
+     * 用户反馈「滑动的距离稍微长一点，过程中图片就会变得很模糊…伤眼睛」。改成显示宽度后，
+     * 占位图与 SSIV 随后画出的清晰图在 fit-width 下视觉一致，「模糊→清晰」的切换不再可见。
+     */
+    private fun previewTargetWidth(): Int =
+        PagePreviewCache.previewTargetWidthFor(resources.displayMetrics.widthPixels)
+
+    /** 后台生成预览（读超分缓存文件，纯本地 I/O）。没有超分缓存时什么都做不了。 */
+    private fun buildPagePreview(key: PagePreviewCache.Key?) {
+        if (key == null) return
+        val preferences = readerPreferences ?: return
+        val generation = previewGeneration
+        val targetWidth = previewTargetWidth()
+        previewJob = viewScope.launchIO {
+            val configHash = runCatching { enhancementConfigHash(preferences) }.getOrNull() ?: return@launchIO
+            val preview = PagePreviewCache.loadFromEnhancedCache(context, key, configHash, targetWidth)
+                ?: return@launchIO
+            PagePreviewCache.put(key, preview)
+            withUIContext {
+                if (generation != previewGeneration || previewKey != key) return@withUIContext
+                val drawable = BitmapDrawable(resources, preview)
+                (pageView as? SubsamplingScaleImageView)?.background = drawable
+                if (!imageReady) background = drawable
+            }
+        }
+    }
+
+    /** 回收/换页时清掉预览状态（holder 会被复用去显示别的页，留着会串页）。 */
+    private fun clearPagePreview() {
+        previewGeneration++
+        previewJob?.cancel()
+        previewJob = null
+        previewKey = null
+        imageReady = false
+        background = null
+    }
+
+    /**
+     * SY 2026-10-18：持有人重新绑定一页时调用 —— 先清掉上一页的预览状态，再垫这一页的预览。
+     *
+     * 必须「先清」的原因：RecyclerView 的 view cache 命中时**不会**走 onViewRecycled，
+     * 即 holder 没被 recycle 就直接绑到了另一页，此时 frame/SSIV 上还留着上一页的模糊图，
+     * 而 imageReady 也还停在 true（→ 新预览不会垫上、加载态会露出阅读器底色）。
+     */
+    fun bindPagePreview(key: PagePreviewCache.Key?) {
+        clearPagePreview()
+        applyPagePreview(key)
+    }
+    // SY <--
 
     private fun SubsamplingScaleImageView.setupZoom(config: Config?) {
         // 5x zoom
@@ -378,7 +553,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
         enhanceKey: EnhanceKey? = null,
         streamFn: (() -> InputStream)? = null,
         readerPage: ReaderPage? = null,
+        previewKey: PagePreviewCache.Key? = null,
     ) = (pageView as? SubsamplingScaleImageView)?.apply {
+        // SY --> 2026-10-18：先垫「这一页自己的低清预览」，再让 SSIV 分块解码。
+        // 解码窗口里看到的是同一页的模糊版（既不黑也不白），SSIV 出像素后自然变清晰。
+        imageReady = false
+        applyPagePreview(previewKey)
+        // SY <--
         setDoubleTapZoomDuration(config.zoomDuration.getSystemScaledDuration())
         setMinimumScaleType(config.minimumScaleType)
         setMinimumDpi(1) // Just so that very small image will be fit for initial load
@@ -415,7 +596,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 // SY <--
                 val prefs = readerPreferences
                 if (enhanceKey == null || prefs == null || !prefs.realCuganEnabled().get()) {
-                    setImage(ImageSource.inputStream(data.inputStream()))
+                    // SY --> 超大图先降采样（见 setImageCapped 注释），防 subscale 全分辨率拷贝 OOM
+                    setImageCapped(data)
+                    // SY <--
                     isVisible = true
                     return@apply
                 }
@@ -423,12 +606,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 this@ReaderPageImageView.readerPage = readerPage
                 val cachedFile = currentEnhancedFile(enhanceKey, prefs)
                 if (cachedFile != null) {
-                    setImage(ImageSource.inputStream(cachedFile.inputStream()))
+                    setImageCapped(cachedFile)
                     isVisible = true
                     return@apply
                 }
 
-                setImage(ImageSource.inputStream(data.inputStream()))
+                setImageCapped(data)
                 isVisible = true
 
                 if (readerPage != null && controlsCurrentPageSelection) {
@@ -438,6 +621,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 // WebtoonViewer.onPageSelected 做（见 controlsCurrentPageSelection 的说明）。
                 if (controlsCurrentPageSelection) {
                     ImageEnhancer.reprioritizeAround(enhanceKey.pageIndex, enhanceKey.pageVariant)
+                    // SY 2026-09-29：恢复基线「预载页数」的超分窗口裁剪（原功能，重构时丢失）：
+                    // 只保留 [当前页, 当前页+预载页数] 的增强请求，窗口外取消（前面已看过、
+                    // 后面太远的不浪费算力）；被取消的页滑回窗口时由绑定/轮询重新入队。
+                    val preloadSize = prefs.realCuganPreloadSize().get().coerceIn(1, 8)
+                    ImageEnhancer.cancelRequestsLessThan(
+                        enhanceKey.mangaId,
+                        enhanceKey.chapterId,
+                        enhanceKey.pageIndex,
+                    )
+                    ImageEnhancer.cancelRequestsGreaterThan(
+                        enhanceKey.mangaId,
+                        enhanceKey.chapterId,
+                        enhanceKey.pageIndex + preloadSize,
+                    )
                 }
                 // 优先级不再无脑 highPriority=true：只有「这一页就是当前目标页」才插队，
                 // 其余（预载页）按普通优先级排队。条漫一屏多页时，若每页都按高优先级
@@ -456,6 +653,50 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
+    // SY --> 2026-10-02：**已移除「按像素上限降采样」**（用户要求保分辨率）。
+    // 历史上曾因 SSIV 的 Decoder 会把全分辨率结果整幅拷进 Java 堆（8K 跨页 ~24MP ≈ 97MB）
+    // 而设过 8MP / 屏幕级上限，超限则降采样成 Bitmap 再显示；代价是放大的页发虚，
+    // 且条漫下容器高度与图片不符会裁切。现统一走 `ImageSource.inputStream` 让 SSIV
+    // 分块解码（只解可见区域 tile），全分辨率与低内存兼得。
+    // ⚠️ 若将来真的出现超大跨页 OOM（栈顶为 `subscaleview.decoder.*TilesInitTask`），
+    //    请针对**单个畸形页**加保护，不要再做全局降采样。
+    private fun SubsamplingScaleImageView.setImageCapped(source: BufferedSource) {
+        setImageCapped(source::inputStream)
+    }
+
+    private fun SubsamplingScaleImageView.setImageCapped(file: File) {
+        setImageCapped(file::inputStream)
+    }
+
+    /**
+     * SY --> 2026-10-02（用户要求）：**不再按像素上限降采样，统一交给 SSIV 分块解码**。
+     *
+     * 旧实现先用 `probe()` 读图片头，像素数超过 `MAX_INPUT_PIXELS` 就整页解码 + 2 的幂
+     * `inSampleSize` 降采样再交给 SSIV —— 省了合成带宽，但**放大会明显发虚**（用户实测反馈
+     * "条漫模式下图片不能完整显示 / 分辨率被切掉"）。
+     *
+     * 现在直接走 `ImageSource.inputStream(display())`：SSIV 用 BitmapRegionDecoder
+     * **只解码可见区域的 tile**，内存占用与图片总像素无关 ⇒ 全分辨率与低内存可以兼得；
+     * 同时**省掉"读图片头"这一步**（少开一次流，对未缓存的 WebDAV 页少一次网络往返）。
+     *
+     * 代次（generation）保证：视图被 recycle / 重新 setImage 后，迟到的结果直接丢弃，
+     * 不会贴到错页或已回收的视图上。
+     * SY <--
+     */
+    private fun SubsamplingScaleImageView.setImageCapped(display: () -> InputStream) {
+        val generation = ++capDecodeGeneration
+        val target = this
+        capDecodeJob?.cancel()
+        capDecodeJob = viewScope.launchIO {
+            withUIContext {
+                if (generation == capDecodeGeneration && pageView === target) {
+                    setImage(ImageSource.inputStream(display()))
+                }
+            }
+        }
+    }
+    // SY <--
+
     // SY --> mihon_img_upscale 移植：一页在增强缓存里的定位信息
     data class EnhanceKey(
         val mangaId: Long,
@@ -468,6 +709,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
     // SY --> mihon_img_upscale 移植：增强结果轮询 + 换图
     // （逐页状态文案已移除，统一由 ReaderProcessingStatusView 显示全局状态）
     // region Image enhancement
+
+    /**
+     * SY 2026-10-18：超分缓存键 → 预览缓存键。
+     * 两者同构；变体必须带上（拆分合并 / 旋转后的显示比例与原页不同，预览也不能混用）。
+     */
+    private fun previewCacheKey(key: EnhanceKey): PagePreviewCache.Key =
+        PagePreviewCache.Key(key.mangaId, key.chapterId, key.pageIndex, key.pageVariant)
 
     /** 这一页当前配置下的增强缓存文件；没有则 null。 */
     private fun currentEnhancedFile(key: EnhanceKey, preferences: ReaderPreferences): File? {
@@ -609,6 +857,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 if (file != null) {
                     val bitmap = decodeEnhancedBitmap(file)
                     if (bitmap != null) {
+                        // SY --> 2026-10-18：这一页的全分辨率增强图此刻就在手上，顺手生成低清预览
+                        // （零额外 I/O）。它既是当前换图的兜底，也是**滑回去重绑时**的 blur-up 占位，
+                        // 让「SSIV 重新分块解码」的窗口里看到的是这一页的模糊版而不是纯色。
+                        // 这里在 launchIO 里，缩放不会卡主线程；seed 只读不写传入的位图。
+                        PagePreviewCache.seed(previewCacheKey(key), bitmap)
+                        // SY <--
                         withUIContext { setProcessedSource(file, bitmap) }
                         // 换图成功：记下是按哪个配置换的，转入守候态等下一次配置变更。
                         // 注意这里在 IO 线程上写、守候态在下一轮 IO 迭代上读，不跨线程。
@@ -719,6 +973,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
         clearProcessedSwapView()
 
         val swapView = newSubsamplingView()
+        // SY --> 2026-10-18：换图视图绝不能被留成透明的 —— 淡出结束后它就是这个 holder 的
+        // 常驻 pageView，下次重绑分块解码时透明的它就会露出阅读器底色（黑闪）。
+        // 垫上本页预览；没有预览时留透明（露出阅读器底下的封面底图，不是纯色兜底）。
+        val swapPreview = PagePreviewCache.get(previewKey)
+        swapView.background = swapPreview?.let { BitmapDrawable(resources, it) }
+        // SY <--
         // 新视图必须与正在显示的视图用同一套显示参数，否则换图瞬间会有裁边/缩放方式的跳变
         config?.let { cfg ->
             swapView.setMinimumScaleType(cfg.minimumScaleType)
@@ -775,6 +1035,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         swapView.setImage(ImageSource.bitmap(enhanced))
         isVisible = true
     }
+
 
     /**
      * 原图（上层）淡出，露出底层已就绪的增强图；淡出结束后悄悄回收原图层。
@@ -840,6 +1101,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
         } else {
             PhotoView(context)
         }.apply {
+            // SY --> 动图走这套视图，同样给白色占位背景（与 SSIV 路径一致），
+            // 仅在创建时设一次，复用 holder 时保留，不落滑动热路径。
+            setBackgroundColor(Color.WHITE)
             adjustViewBounds = true
 
             if (this is PhotoView) {
@@ -931,6 +1195,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
 private const val MAX_ZOOM_SCALE = 5F
 
+// SY --> 2026-10-02：`MAX_INPUT_PIXELS`（页面像素上限）已**删除**。
+// 它曾用于「超过上限的页先降采样成 Bitmap 再交给 SSIV」，代价是放大发虚、条漫下裁切。
+// 现统一走 SSIV 分块解码（BitmapRegionDecoder 只解可见 tile），内存与总像素无关，
+// 因此不再需要任何像素上限。历史 OOM 结论与注意事项见 setImageCapped 上方注释。
+// SY <--
+
 // SY --> mihon_img_upscale 移植：增强轮询与过渡参数
 private const val ENHANCEMENT_POLL_INTERVAL_MS = 400L
 // SY --> 定稿/放弃之后的守候间隔。
@@ -954,7 +1224,10 @@ private const val ENHANCEMENT_SWAP_FADE_MS = 120L
 // 只要 enabled=false 就返回 null，调用方随即回到原生的「直接喂流」路径，
 // 对没开增强的用户做到零行为变更。
 // 章节 id 为空（尚未入库的本地/未保存章节）时不增强——缓存键需要稳定的 chapterId。
-internal fun ReaderPage.enhanceKey(enabled: Boolean): ReaderPageImageView.EnhanceKey? {
+internal fun ReaderPage.enhanceKey(
+    enabled: Boolean,
+    variant: String = "",
+): ReaderPageImageView.EnhanceKey? {
     if (!enabled) return null
     val chapterId = chapter.chapter.id ?: return null
     val mangaId = chapter.chapter.manga_id ?: return null
@@ -962,6 +1235,7 @@ internal fun ReaderPage.enhanceKey(enabled: Boolean): ReaderPageImageView.Enhanc
         mangaId = mangaId,
         chapterId = chapterId,
         pageIndex = index,
+        pageVariant = variant,
     )
 }
 // SY <--
