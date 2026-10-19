@@ -1,8 +1,8 @@
-﻿<div align="center">
+<div align="center">
 
 # mihonW · 云盘 / WebDAV / 本地漫画阅读器
 
-### 基于 Mihon 0.20.4 的派生版：把 115、夸克、阿里云盘、WebDAV、本地文件夹里的漫画，用一个书架读完
+### 基于 Mihon 0.20.4 的派生版（从 [mihon_img_upscale](https://github.com/HaoweiLi97/mihon_img_upscale) 分出来）：把 115、夸克、阿里云盘、WebDAV、本地文件夹里的漫画，用一个书架读完
 
 > 🐞 **BUG 反馈 QQ 群：1131187159** —— 装不上、连不上、某本书打不开、封面不对，都可以进群反馈
 
@@ -20,7 +20,7 @@
 
 ## 这是什么
 
-这是 **[Mihon](https://github.com/mihonapp/mihon)**（Android 漫画阅读器，原 Tachiyomi）的派生版，基线为官方 `0.20.4`。上游的全部功能（图源扩展、书架、更新、历史、追踪、备份、阅读器各模式）都保留，在此之上做了一件上游没有的事：
+这是 **[Mihon](https://github.com/mihonapp/mihon)**（Android 漫画阅读器，原 Tachiyomi）的派生版，基线为官方 `0.20.4`。本仓库从 **[mihon_img_upscale](https://github.com/HaoweiLi97/mihon_img_upscale)** 分出（超分链路、WebDAV 云同步、双页阅读来自该项目），上游的全部功能（图源扩展、书架、更新、历史、追踪、备份、阅读器各模式）都保留，在此之上做了一件上游没有的事：
 
 > **把「自己的漫画库」直接变成一个内置图源** —— 不管它躺在 115 网盘、夸克网盘、阿里云盘、自建 WebDAV 服务器，还是手机本地文件夹里，都能在应用内**用文件夹视图浏览、点开就读**，不需要下载整本，不需要额外装扩展，也不需要先建库。
 
@@ -366,8 +366,9 @@ PDF 默认会探一次增量更新链，链太深时自动回退整本下载（�
 | 项目 | 关系 | 许可证 |
 |---|---|---|
 | [**Mihon**](https://github.com/mihonapp/mihon) | **本项目的基线**，代码取自官方 `0.20.4`。图源框架、书架、更新、历史、追踪、备份、阅读器（单页/双页/条漫/竖向连续）、主题、i18n、扩展体系全部来自它 | Apache-2.0 |
+| [**mihon_img_upscale**](https://github.com/HaoweiLi97/mihon_img_upscale) | **本 fork 的直接上游**（它本身是 Mihon 0.20.4 的分支）。超分链路、WebDAV 云同步、双页阅读都是从它移植过来的，细节见下一节 | Apache-2.0 |
 | [**Tachiyomi**](https://github.com/tachiyomiorg/tachiyomi) | Mihon 的前身，整个架构与生态的源头；Mihon 本身即其继任者 | Apache-2.0 |
-| **Mihon / Tachiyomi 全体贡献者与译者** | 本仓库只在其上加了「网盘 / WebDAV / 本地文件夹」这一层图源与一套离线超分，其余每一行都来自他们多年的工作 | — |
+| **Mihon / Tachiyomi 全体贡献者与译者** | 本仓库只在他们与 mihon_img_upscale 的基础上加了「网盘 / WebDAV / 本地文件夹」这一层图源与文件夹视图，其余每一行都来自他们多年的工作 | — |
 
 > 本仓库是 Mihon 的**非官方**修改版，名称、图标与 Mihon 官方无隶属关系；`app/google-services.json` 是上游 Mihon 公开的 Firebase 客户端配置（公有 API key），仅用于构建，不含私密凭据。
 
@@ -375,6 +376,7 @@ PDF 默认会探一次增量更新链，链太深时自动回退整本下载（�
 
 | 来源 | 用在哪 | 许可证 |
 |---|---|---|
+| [**mihon_img_upscale**](https://github.com/HaoweiLi97/mihon_img_upscale)（HaoweiLi97） | **本仓库的直接上游 —— 本 fork 就是从它分出来的**，基于 Mihon 0.20.4。离线超分的整条链路来自它：`app/src/main/cpp/` 的 `waifu2x.cpp` / `waifu2x.h` / `waifu2x_jni.cpp` / `shaders.h` 与 Vulkan 融合着色器、`util/waifu2x/` 的 `Waifu2x` / `ImageEnhancer` / `ImageEnhancementCache` / `EnhancementConfig`、`data/coil/ImageDecoder.kt` 与 `Utils.kt` 的接入点、阅读器「画面增强」设置页。此外还移植了它的 **WebDAV 云同步**（`CloudSyncService`、`Downloader` 上传、`CloudSyncDestinationScreen` 目录树、`DownloadPreferences` 云同步偏好）、**双页阅读**（`PageLayout`、`page_layout` / `invert_double_pages`、`PagerViewerAdapter`、`ViewerConfig`）、图源界面的「跳转到页码」对话框。<br>本仓库的改动：把它的多模型方案（Real-CUGAN / Real-ESRGAN / Waifu2x / Anime4K GLSL）收敛成**单一 Anime4K ACNet ncnn 模型**，新增 `anime4k.cpp` 与 luma 单通道融合着色器（`*_luma.comp`），并加入网盘源、本地文件夹源、文件夹视图、PDF/pdfium 流式阅读 | Apache-2.0 |
 | [**Komiho**](https://github.com/ruzhe85/Komiho) | 封面保存策略移植自其 `WebDavCoverCache`（按漫画粒度落盘、≤450px / JPEG q80 降采样、未生成时不发请求）；超分原生的 tile 尺寸推导、prepadding、自适应批量、连续滚动让出（`Phase 9`–`Phase 12`）也沿用其思路 | Apache-2.0 |
 | [**Anime4K**](https://github.com/bloc97/Anime4K) | 超分算法本体 —— v4.0 `ACNet` 网络结构（9×Conv3x3 + ReLU + ConvTranspose 2×，单通道 luma） | MIT |
 | [**Venera-SSR**](https://github.com/Kiastr/Venera-SSR) | 提供可直接使用的 `anime4k_acnet.onnx` 权重；本仓库手写脚本转成 ncnn 的 `param`/`bin`，并用 onnxruntime 逐层对齐校验。**只取了这一个权重文件，未使用其任何代码** | GPL-3.0（仅权重文件） |
@@ -415,6 +417,8 @@ Anime4K ACNet 2× super-resolution. Entry point: the **folder** and **storage** 
 top bar.
 
 Built on [Mihon](https://github.com/mihonapp/mihon) (Apache-2.0) and [Tachiyomi](https://github.com/tachiyomiorg/tachiyomi);
+super-resolution, WebDAV cloud sync and dual-page reading ported from
+[mihon_img_upscale](https://github.com/HaoweiLi97/mihon_img_upscale) (Apache-2.0);
 super-resolution powered by [Anime4K](https://github.com/bloc97/Anime4K) (MIT) via [ncnn](https://github.com/Tencent/ncnn) (BSD-3).
 Full credits in [鸣谢上游](#鸣谢上游).
 
