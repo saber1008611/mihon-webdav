@@ -4,12 +4,15 @@
 
 ### 基于 Mihon 0.20.4 的派生版：把 115、夸克、阿里云盘、WebDAV、本地文件夹里的漫画，用一个书架读完
 
+> 🐞 **BUG 反馈 QQ 群：1131187159** —— 装不上、连不上、某本书打不开、封面不对，都可以进群反馈
+
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84.svg)](#安装)
 [![Base](https://img.shields.io/badge/base-Mihon%200.20.4-blue.svg)](https://github.com/mihonapp/mihon)
 [![Version](https://img.shields.io/badge/version-1.0.35-orange.svg)](#安装)
+[![BUG 反馈群](https://img.shields.io/badge/QQ%E7%BE%A4-1131187159-12B7F5.svg)](#bug-反馈)
 
-[功能](#功能总览) · [网盘](#一网盘三个原生网盘源) · [WebDAV](#二webdav) · [本地文件夹](#三本地文件夹) · [文件夹视图](#四文件夹视图一个书架看全部) · [格式](#支持的漫画格式) · [安装](#安装) · [构建](#从源码构建) · [FAQ](#常见问题) · [鸣谢](#鸣谢上游)
+[功能](#功能总览) · [网盘](#一网盘三个原生网盘源) · [WebDAV](#二webdav) · [本地文件夹](#三本地文件夹) · [文件夹视图](#四文件夹视图一个书架看全部) · [格式](#支持的漫画格式) · [安装](#安装) · [构建](#从源码构建) · [FAQ](#常见问题) · [BUG 反馈](#bug-反馈) · [鸣谢](#鸣谢上游)
 
 </div>
 
@@ -285,6 +288,8 @@ bash build_release.sh
 
 ## 常见问题
 
+> 下面没覆盖到的问题，欢迎进 **BUG 反馈 QQ 群：1131187159** 反馈；提问题时附上机型、Android 版本和出问题的目录/文件类型，排查会快很多。
+
 <details>
 <summary><b>网盘登录成功，但「云盘」里看不到内容</b></summary>
 
@@ -332,6 +337,23 @@ PDF 默认会探一次增量更新链，链太深时自动回退整本下载（�
 
 检查三处：① 阅读器齿轮 → 色彩/滤镜 → 画面增强是否打开；② 当前页分辨率是否超过「处理分辨率上限」而被跳过；③ 是否打开了「显示处理状态」，右上角会显示 `增强中` / `已增强`。
 </details>
+
+---
+
+## BUG 反馈
+
+| 渠道 | 用途 |
+|---|---|
+| **QQ 群：1131187159** | 首选。装不上、连不上网盘/WebDAV、某本书打不开、封面不显示、超分异常，都可以直接问 |
+| [GitHub Issues](https://github.com/saber1008611/mihon-webdav/issues) | 适合能稳定复现、需要贴长日志的问题 |
+
+提问时尽量带上这几项，能省掉大半来回：
+
+- 手机型号 + Android 版本（例：Redmi K30 Pro / Android 12）
+- 出问题的**接入方式**：115 网盘 / 夸克 / 阿里云盘 / WebDAV / 本地文件夹
+- 出问题的**文件类型和大小**：例 `cbz 320MB`、`pdf 222MB（扫描版）`、`散图文件夹 800 张`
+- 复现步骤：从哪个入口进去、点了什么、期望什么、实际什么
+- 有条件的话附日志：`adb logcat -d | findstr /i "mihonW FATAL AndroidRuntime"`
 
 ---
 
@@ -395,5 +417,7 @@ top bar.
 Built on [Mihon](https://github.com/mihonapp/mihon) (Apache-2.0) and [Tachiyomi](https://github.com/tachiyomiorg/tachiyomi);
 super-resolution powered by [Anime4K](https://github.com/bloc97/Anime4K) (MIT) via [ncnn](https://github.com/Tencent/ncnn) (BSD-3).
 Full credits in [鸣谢上游](#鸣谢上游).
+
+**Bug reports**: QQ group **1131187159** (Chinese).
 
 </div>
