@@ -54,13 +54,18 @@ internal fun ColumnScope.ReadingModePage(viewModel: ReaderSettingsViewModel) {
             },
         )
         if (resolved == ReadingMode.LEFT_TO_RIGHT || resolved == ReadingMode.RIGHT_TO_LEFT) {
+            // SY 2026-10-19：WebGpu 渲染器不读 pageLayout（那只驱动经典 Pager 的 doublePages），
+            // 双页完全由 dualPageView 决定（WebGpuViewer.isDualPageMode）。这里把
+            // 「页面布局：单页 / 双页 / 自动」直接映射到 dualPageView，让默认（WebGPU）
+            // 渲染器下的翻页模式也有双页入口，而不是只有英文的 Dual page view。
             val dualPageView by viewModel.preferences.dualPageView.collectAsState()
-            SettingsChipRow(MR.strings.pref_dual_page_view) {
-                ReaderPreferences.DualPageView.entries.map {
+            val pageLayout = PageLayout.fromDualPageView(dualPageView)
+            SettingsChipRow(MR.strings.pref_page_layout) {
+                PageLayout.selectableEntries.map {
                     FilterChip(
-                        selected = it == dualPageView,
-                        onClick = { viewModel.preferences.dualPageView.set(it) },
-                        label = { Text(stringResource(it.titleRes)) },
+                        selected = pageLayout == it,
+                        onClick = { viewModel.preferences.dualPageView.set(it.toDualPageView()) },
+                        label = { Text(stringResource(it.stringRes)) },
                     )
                 }
             }

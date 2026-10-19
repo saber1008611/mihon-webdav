@@ -19,10 +19,30 @@ enum class PageLayout(
     AUTOMATIC(2, MR.strings.page_layout_automatic),
     ;
 
+    /**
+     * SY 2026-10-19：映射到 WebGpu 渲染器的双页偏好 [ReaderPreferences.DualPageView]。
+     *
+     * WebGpu 路径不读 [ReaderPreferences.pageLayout]（它只驱动经典 Pager 的 `doublePages`），
+     * 双页完全由 `dualPageView` 决定（见 `WebGpuViewer.isDualPageMode`）。两者三态语义同构：
+     * 单页 ↔ NEVER、双页 ↔ ALWAYS、自动（宽屏才双页）↔ WIDE。
+     */
+    fun toDualPageView(): ReaderPreferences.DualPageView = when (this) {
+        SINGLE_PAGE -> ReaderPreferences.DualPageView.NEVER
+        DOUBLE_PAGES -> ReaderPreferences.DualPageView.ALWAYS
+        AUTOMATIC -> ReaderPreferences.DualPageView.WIDE
+    }
+
     companion object {
         val selectableEntries = entries.toList()
 
         fun fromPreference(preference: Int): PageLayout =
             selectableEntries.find { it.value == preference } ?: SINGLE_PAGE
+
+        fun fromDualPageView(dualPageView: ReaderPreferences.DualPageView): PageLayout =
+            when (dualPageView) {
+                ReaderPreferences.DualPageView.NEVER -> SINGLE_PAGE
+                ReaderPreferences.DualPageView.ALWAYS -> DOUBLE_PAGES
+                ReaderPreferences.DualPageView.WIDE -> AUTOMATIC
+            }
     }
 }

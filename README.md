@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 # mihonW · 云盘 / WebDAV / 本地漫画阅读器
 
@@ -9,7 +9,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84.svg)](#安装)
 [![Base](https://img.shields.io/badge/base-Mihon%200.20.4-blue.svg)](https://github.com/mihonapp/mihon)
-[![Version](https://img.shields.io/badge/version-1.0.36-orange.svg)](#安装)
+[![Version](https://img.shields.io/badge/version-1.0.37-orange.svg)](#安装)
 [![BUG 反馈群](https://img.shields.io/badge/QQ%E7%BE%A4-1131187159-12B7F5.svg)](#bug-反馈)
 
 [功能](#功能总览) · [网盘](#一网盘三个原生网盘源) · [WebDAV](#二webdav) · [本地文件夹](#三本地文件夹) · [文件夹视图](#四文件夹视图一个书架看全部) · [格式](#支持的漫画格式) · [安装](#安装) · [构建](#从源码构建) · [FAQ](#常见问题) · [BUG 反馈](#bug-反馈) · [鸣谢](#鸣谢上游)

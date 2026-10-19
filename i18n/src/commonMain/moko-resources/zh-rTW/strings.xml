@@ -945,6 +945,19 @@
     <string name="dual_page_view_never">從不</string>
     <string name="dual_page_view_always">總是</string>
     <string name="dual_page_view_wide">寬螢幕時</string>
+    <!-- SY 2026-10-19：補齊頁面佈局／雙頁相關字串（先前只有英文） -->
+    <string name="pref_page_layout">頁面佈局</string>
+    <string name="page_layout_single">單頁</string>
+    <string name="page_layout_double">雙頁</string>
+    <string name="page_layout_automatic">自動</string>
+    <string name="pref_invert_double_pages">雙頁左右互換</string>
+    <string name="pref_transition_animation_dual">轉場動畫（雙頁）</string>
+    <string name="pref_cutout_mode_dual">螢幕凹口顯示模式（雙頁）</string>
+    <string name="pref_continuous_minwidth">最小寬度</string>
+    <string name="pref_continuous_gap">間距</string>
+    <string name="transition_animation_basic">基礎</string>
+    <string name="transition_animation_flip">翻頁</string>
+    <string name="transition_animation_none">無</string>
     <string name="pref_filter_update_categories_details">類別同時屬於「排除」及「包含」的更新將不會顯示。</string>
     <string name="pref_filter_upcoming_categories_details">類別同時屬於「排除」及「包含」的作品將不會顯示。</string>
     <!-- SY start: 雲端同步（WebDAV）與超分狀態 -->
